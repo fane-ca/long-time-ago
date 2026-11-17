@@ -1,0 +1,110 @@
+{
+	"relic_keyboard": {
+		"id": "relic_keyboard",
+		"name": "Barnacle-Crusted Mechanical Keyboard",
+		"weight": 2.5,
+		"value": 150,
+		"min_depth": 15.0,
+		"rarity": "Common",
+		"set_name": "21st Century Computing",
+		"color_hex": "#00ffff",
+		"icon_path": "res://assets/relics/relic_keyboard.png",
+		"alien_desc": "Ancient ritual altar with 104 clickable switches."
+	},
+	"relic_mouse": {
+		"id": "relic_mouse",
+		"name": "Optical Gaming Mouse",
+		"weight": 0.8,
+		"value": 110,
+		"min_depth": 25.0,
+		"rarity": "Common",
+		"set_name": "21st Century Computing",
+		"color_hex": "#33bbff",
+		"icon_path": "res://assets/relics/relic_mouse.png",
+		"alien_desc": "Handheld tracking rodent with a glowing RGB optical eye."
+	},
+	"relic_core": {
+		"id": "relic_core",
+		"name": "Sunken AI Server Core",
+		"weight": 6.5,
+		"value": 650,
+		"min_depth": 160.0,
+		"rarity": "Legendary",
+		"set_name": "21st Century Computing",
+		"color_hex": "#ff00ff",
+		"icon_path": "res://assets/relics/relic_core.png",
+		"alien_desc": "Heavy silicon monolith containing pre-war digital human consciousness."
+	},
+	"relic_cup": {
+		"id": "relic_cup",
+		"name": "Rusty Thermal Mug",
+		"weight": 1.2,
+		"value": 80,
+		"min_depth": 10.0,
+		"rarity": "Common",
+		"set_name": "Daily Café Life",
+		"color_hex": "#ff9933",
+		"icon_path": "res://assets/relics/relic_cup.png",
+		"alien_desc": "Insulated vessel once used to hold dark caffeinated morning stimulant."
+	},
+	"relic_toaster": {
+		"id": "relic_toaster",
+		"name": "Chrome Bread Warmer",
+		"weight": 3.2,
+		"value": 240,
+		"min_depth": 85.0,
+		"rarity": "Rare",
+		"set_name": "Daily Café Life",
+		"color_hex": "#ffd700",
+		"icon_path": "res://assets/relics/relic_toaster.png",
+		"alien_desc": "Dual-slot thermal catapult designed to scorch carbohydrate slices."
+	},
+	"relic_console": {
+		"id": "relic_console",
+		"name": "Ancient Handheld Console",
+		"weight": 1.8,
+		"value": 380,
+		"min_depth": 110.0,
+		"rarity": "Rare",
+		"set_name": "Daily Café Life",
+		"color_hex": "#ff5588",
+		"icon_path": "res://assets/relics/relic_console.png",
+		"alien_desc": "Portable silicon entertainment brick with directional cross pad."
+	},
+	"relic_dogtag": {
+		"id": "relic_dogtag",
+		"name": "Tarnished Titanium Dogtags",
+		"weight": 0.4,
+		"value": 190,
+		"min_depth": 45.0,
+		"rarity": "Common",
+		"set_name": "Resource War Remnants",
+		"color_hex": "#c0c0c0",
+		"icon_path": "res://assets/relics/relic_dogtag.png",
+		"alien_desc": "Stamped metal identity plates of pre-war oceanic combat personnel."
+	},
+	"relic_mask": {
+		"id": "relic_mask",
+		"name": "Cracked Gas Mask",
+		"weight": 3.0,
+		"value": 280,
+		"min_depth": 95.0,
+		"rarity": "Rare",
+		"set_name": "Resource War Remnants",
+		"color_hex": "#adff2f",
+		"icon_path": "res://assets/relics/relic_mask.png",
+		"alien_desc": "Late-war synthetic breathing apparatus with cracked reinforced lenses."
+	},
+	"blueprint_tube": {
+		"id": "blueprint_tube",
+		"name": "Pre-War Architectural Blueprint",
+		"weight": 0.5,
+		"value": 200,
+		"min_depth": 40.0,
+		"rarity": "Rare",
+		"set_name": "Survivor Technology",
+		"color_hex": "#00bfff",
+		"icon_path": "res://assets/relics/relic_blueprint.png",
+		"alien_desc": "Hermetically sealed alloy canister holding modular human hab schematics."
+	}
+}

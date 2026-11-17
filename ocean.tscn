@@ -1,0 +1,14 @@
+[gd_scene format=3 uid="uid://cx7lw3qeoo47x"]
+
+[ext_resource type="Script" uid="uid://c0vxk4hdq0d53" path="res://diver.gd" id="1_j38dg"]
+[ext_resource type="Texture2D" uid="uid://dkpof24rfvglp" path="res://icon.svg" id="2_nb2vx"]
+
+[node name="Ocean" type="Node2D" unique_id=86540865]
+
+[node name="Diver" type="CharacterBody2D" parent="." unique_id=673922287]
+script = ExtResource("1_j38dg")
+
+[node name="Sprite2D" type="Sprite2D" parent="Diver" unique_id=2076638874]
+visible = false
+scale = Vector2(0.5, 0.5)
+texture = ExtResource("2_nb2vx")
