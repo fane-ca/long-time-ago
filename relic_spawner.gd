@@ -137,6 +137,7 @@ class RelicItem extends Area2D:
 
 
 	func _ready() -> void:
+		add_to_group("relics")
 		base_position_y = position.y
 		bobbing_seed = randf() * TAU
 
@@ -201,9 +202,17 @@ class RelicItem extends Area2D:
 
 
 	func _create_visuals() -> void:
+		# 1. Use Unified 4-State Relic Visual System ("underwater_buried")
+		var bp = _get_backpack()
+		if bp != null and bp.has_method("build_relic_visual"):
+			var vis = bp.build_relic_visual(relic_id, "underwater_buried")
+			if vis != null:
+				add_child(vis)
+				return
+
 		var relic_color: Color = relic_data.get("color", Color.CYAN)
 
-		# 1. Soft glowing outer polygon
+		# Fallback procedural visual if backpack is missing
 		glow_polygon = Polygon2D.new()
 		glow_polygon.name = "GlowPolygon"
 		var glow_points := PackedVector2Array()
@@ -216,7 +225,6 @@ class RelicItem extends Area2D:
 		glow_polygon.color = Color(relic_color.r, relic_color.g, relic_color.b, 0.28)
 		add_child(glow_polygon)
 
-		# 2. Main crystalline relic body polygon
 		core_polygon = Polygon2D.new()
 		core_polygon.name = "CorePolygon"
 		var core_points := PackedVector2Array([
@@ -230,7 +238,6 @@ class RelicItem extends Area2D:
 		core_polygon.color = relic_color
 		add_child(core_polygon)
 
-		# 3. Inner bright highlight facet
 		var highlight := Polygon2D.new()
 		highlight.name = "HighlightPolygon"
 		var highlight_points := PackedVector2Array([
@@ -244,7 +251,6 @@ class RelicItem extends Area2D:
 		highlight.color = Color.WHITE.lerp(relic_color, 0.35)
 		add_child(highlight)
 
-		# 4. Smart Sprite Auto-Loader (Direction 4)
 		var icon_p: String = str(relic_data.get("icon_path", ""))
 		if not icon_p.is_empty():
 			if Engine.has_singleton("Backpack"):
@@ -322,6 +328,8 @@ class RelicItem extends Area2D:
 		if backpack.can_add_item(relic_id):
 			is_collected = true
 			backpack.add_item(relic_id)
+			if backpack.has_method("play_sfx"):
+				backpack.play_sfx("pickup")
 
 			prompt_label.text = "+ Salvaged %s!" % relic_data.get("name", "Relic")
 			prompt_label.add_theme_color_override("font_color", Color(0.35, 1.0, 0.55))

@@ -83,6 +83,10 @@ var _is_surfaced: bool = false
 var _is_rescuing: bool = false
 var _rescue_modal: Control
 
+## Active Underwater Tools
+var _emp_cooldown: float = 0.0
+const EMP_COOLDOWN_TIME: float = 3.0
+
 
 func _ready() -> void:
 	add_to_group("diver")
@@ -132,6 +136,9 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if _emp_cooldown > 0.0:
+		_emp_cooldown = maxf(_emp_cooldown - delta, 0.0)
+
 	if _is_rescuing:
 		velocity = Vector2.ZERO
 		return
@@ -147,12 +154,35 @@ func _physics_process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and not event.echo:
-		if _is_rescuing:
+	if _is_rescuing:
+		if event is InputEventKey and event.pressed and not event.echo:
 			if event.physical_keycode == KEY_SPACE or event.keycode == KEY_SPACE or event.physical_keycode == KEY_ENTER or event.keycode == KEY_ENTER or event.physical_keycode == KEY_ESCAPE or event.keycode == KEY_ESCAPE:
 				_on_rescue_return_pressed()
 				return
+		return
 
+	# Active Underwater Tools: Sonar Ping ([Q] or [RMB])
+	if (event is InputEventKey and event.pressed and not event.echo and (event.physical_keycode == KEY_Q or event.keycode == KEY_Q)) \
+		or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT):
+		if get_viewport() != null:
+			get_viewport().set_input_as_handled()
+		trigger_sonar_ping()
+		return
+
+	# Active Underwater Tools: EMP Stun Pulse ([Space] or [LMB])
+	if (_inventory_modal == null or not _inventory_modal.visible):
+		if event is InputEventKey and event.pressed and not event.echo and (event.physical_keycode == KEY_SPACE or event.keycode == KEY_SPACE):
+			if get_viewport() != null:
+				get_viewport().set_input_as_handled()
+			trigger_emp_pulse(false)
+			return
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			if get_viewport() != null:
+				get_viewport().set_input_as_handled()
+			trigger_emp_pulse(true)
+			return
+
+	if event is InputEventKey and event.pressed and not event.echo:
 		# Go ashore when near water surface by pressing F
 		if position.y <= 70.0 and (event.physical_keycode == KEY_F or event.keycode == KEY_F):
 			if get_viewport() != null:
@@ -356,6 +386,11 @@ func _update_headlamp(delta: float) -> void:
 
 	_headlamp_rig.rotation = lerp_angle(_headlamp_rig.rotation, target_angle, clampf(9.0 * delta, 0.0, 1.0))
 
+	# Sync aim target with VisualRig HeadMaskPivot
+	if sprite != null and sprite.has_method("set_aim_target"):
+		var mouse_pos: Vector2 = get_global_mouse_position()
+		sprite.set_aim_target(mouse_pos if velocity.length() <= 20.0 else (global_position + velocity))
+
 
 ## Applies and decays screen shake on camera.
 func _update_camera_shake(delta: float) -> void:
@@ -374,34 +409,22 @@ func _update_sprite_orientation(delta: float) -> void:
 	if sprite == null:
 		return
 
-	if absf(velocity.x) > 10.0:
-		var moving_left: bool = velocity.x < 0.0
-		var should_flip: bool = moving_left if default_facing_right else not moving_left
-		if sprite is Sprite2D:
-			(sprite as Sprite2D).flip_h = should_flip
-		elif sprite is AnimatedSprite2D:
-			(sprite as AnimatedSprite2D).flip_h = should_flip
-		else:
-			sprite.scale.x = -absf(sprite.scale.x) if should_flip else absf(sprite.scale.x)
+	# If using unified VisualRig, VisualRig._process automatically coordinates
+	# body pitch (±25°), treading water bobbing, flutter kicks, and axial stretch!
+	if sprite is Sprite2D or sprite is AnimatedSprite2D:
+		if absf(velocity.x) > 10.0:
+			var moving_left: bool = velocity.x < 0.0
+			var should_flip: bool = moving_left if default_facing_right else not moving_left
+			sprite.flip_h = should_flip
 
-	var target_rotation: float = 0.0
-	if velocity.length() > 10.0:
-		var pitch_ratio: float = clampf(velocity.y / swim_speed, -1.0, 1.0)
-		var max_tilt_rad: float = deg_to_rad(max_tilt_degrees)
-		target_rotation = pitch_ratio * max_tilt_rad
-
-		var is_flipped_h: bool = false
-		if sprite is Sprite2D:
-			is_flipped_h = (sprite as Sprite2D).flip_h
-		elif sprite is AnimatedSprite2D:
-			is_flipped_h = (sprite as AnimatedSprite2D).flip_h
-		else:
-			is_flipped_h = sprite.scale.x < 0.0
-
-		if is_flipped_h:
-			target_rotation = - target_rotation
-
-	sprite.rotation = lerp_angle(sprite.rotation, target_rotation, clampf(tilt_lerp_speed * delta, 0.0, 1.0))
+		var target_rotation: float = 0.0
+		if velocity.length() > 10.0:
+			var pitch_ratio: float = clampf(velocity.y / swim_speed, -1.0, 1.0)
+			var max_tilt_rad: float = deg_to_rad(max_tilt_degrees)
+			target_rotation = pitch_ratio * max_tilt_rad
+			if sprite.flip_h:
+				target_rotation = - target_rotation
+		sprite.rotation = lerp_angle(sprite.rotation, target_rotation, clampf(tilt_lerp_speed * delta, 0.0, 1.0))
 
 
 ## Attaches and configures the scrolling Camera2D.
@@ -888,6 +911,10 @@ func trigger_mine_explosion(mine_pos: Vector2) -> void:
 	if oxygen <= 0.0:
 		oxygen_depleted.emit()
 
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("play_sfx"):
+		bp.play_sfx("hit")
+
 	# 2. Flash screen red
 	if _damage_flash_rect != null:
 		_damage_flash_rect.color = Color(1.0, 0.05, 0.05, 0.8)
@@ -912,6 +939,10 @@ func trigger_drone_hazard(drone_pos: Vector2) -> void:
 	oxygen_changed.emit(oxygen, max_oxygen)
 	if oxygen <= 0.0:
 		oxygen_depleted.emit()
+
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("play_sfx"):
+		bp.play_sfx("hit")
 
 	# 2. Flash screen red
 	if _damage_flash_rect != null:
@@ -1305,6 +1336,221 @@ func _on_backpack_changed() -> void:
 		_populate_inventory_panel()
 
 
+## Active Underwater Tool: Sonar Ping ([Q] or [RMB])
+## Costs 4.0 O2. Sends an expanding 600px cyan sound wave that illuminates relics with pulsing beacons for 4.0s.
+func trigger_sonar_ping() -> void:
+	if not is_inside_tree():
+		return
+	if _is_rescuing or (_inventory_modal != null and _inventory_modal.visible):
+		return
+	if oxygen < 4.0:
+		_spawn_floating_cash_text(position + Vector2(0.0, -30.0), "Low O2 for Sonar!", Color(1.0, 0.4, 0.4))
+		return
+
+	# Deduct 4.0 Oxygen
+	oxygen = maxf(oxygen - 4.0, 0.0)
+	oxygen_changed.emit(oxygen, max_oxygen)
+	if oxygen <= 0.0:
+		oxygen_depleted.emit()
+
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("play_sfx"):
+		bp.play_sfx("sonar")
+
+	# Visual Sonar Ring (scales from 0 to 600px and fades out over 1.2s)
+	var parent_ocean = get_parent() if get_parent() != null else self
+	var ping_node := Node2D.new()
+	ping_node.name = "SonarPingWave"
+	ping_node.global_position = global_position
+
+	var ring := Line2D.new()
+	ring.name = "Ring"
+	ring.width = 3.5
+	ring.default_color = Color(0.15, 0.95, 1.0, 0.9)
+	var ring_mat := CanvasItemMaterial.new()
+	ring_mat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+	ring.material = ring_mat
+
+	var segs: int = 36
+	var pts := PackedVector2Array()
+	for i in range(segs + 1):
+		var ang: float = (float(i) / float(segs)) * TAU
+		pts.append(Vector2(cos(ang), sin(ang)))
+	ring.points = pts
+	ping_node.add_child(ring)
+	parent_ocean.add_child(ping_node)
+
+	var ring_tween := ping_node.create_tween().set_parallel(true)
+	ring_tween.tween_property(ring, "scale", Vector2.ONE * 600.0, 1.2).from(Vector2.ONE * 4.0).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	ring_tween.tween_property(ring, "default_color:a", 0.0, 1.2).set_ease(Tween.EASE_IN)
+	ring_tween.chain().tween_callback(ping_node.queue_free)
+
+	# Locate all relics / blueprints within 600px and spawn bright pulsing beacons
+	var relics = get_tree().get_nodes_in_group("relics") if get_tree() != null else []
+	var found_count: int = 0
+	for item in relics:
+		if not is_instance_valid(item) or not item.is_inside_tree():
+			continue
+		var dist: float = global_position.distance_to(item.global_position)
+		if dist <= 600.0:
+			found_count += 1
+			_attach_sonar_beacon_to(item)
+
+	_spawn_floating_cash_text(position + Vector2(0.0, -36.0), "Sonar Ping! (%d Detected)" % found_count, Color(0.25, 0.95, 1.0))
+	_update_ui()
+
+
+func _attach_sonar_beacon_to(item: Node2D) -> void:
+	var existing = item.get_node_or_null("SonarBeacon")
+	if existing != null:
+		existing.queue_free()
+
+	var beacon := Node2D.new()
+	beacon.name = "SonarBeacon"
+	beacon.position = Vector2(0.0, -28.0)
+
+	var unshaded_mat := CanvasItemMaterial.new()
+	unshaded_mat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+
+	# Diamond target marker
+	var diamond := Polygon2D.new()
+	diamond.material = unshaded_mat
+	diamond.polygon = PackedVector2Array([
+		Vector2(0.0, -14.0), Vector2(10.0, 0.0),
+		Vector2(0.0, 14.0), Vector2(-10.0, 0.0)
+	])
+	diamond.color = Color(0.2, 1.0, 1.0, 0.95)
+	beacon.add_child(diamond)
+
+	# "!" indicator
+	var lbl := Label.new()
+	lbl.material = unshaded_mat
+	lbl.text = "!"
+	lbl.position = Vector2(-15.0, -28.0)
+	lbl.size = Vector2(30.0, 20.0)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 14)
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.95, 0.2))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	lbl.add_theme_constant_override("outline_size", 4)
+	beacon.add_child(lbl)
+
+	item.add_child(beacon)
+
+	# Pulsing animation for 4.0 seconds, then fade out and free
+	var b_tween := beacon.create_tween()
+	for i in range(4):
+		b_tween.tween_property(beacon, "scale", Vector2(1.35, 1.35), 0.45).set_ease(Tween.EASE_OUT)
+		b_tween.tween_property(beacon, "scale", Vector2(0.9, 0.9), 0.45).set_ease(Tween.EASE_IN)
+	b_tween.tween_property(beacon, "modulate:a", 0.0, 0.4)
+	b_tween.tween_callback(beacon.queue_free)
+
+
+## Active Underwater Tool: EMP Stun Pulse ([Space] or [LMB])
+## Costs 6.0 O2, 3s cooldown. Emits directional shockwave arc in forward direction, stunning Security Drones for 4.0s!
+func trigger_emp_pulse(use_mouse_aim: bool = false) -> void:
+	if not is_inside_tree():
+		return
+	if _is_rescuing or (_inventory_modal != null and _inventory_modal.visible):
+		return
+	if _emp_cooldown > 0.0:
+		_spawn_floating_cash_text(position + Vector2(0.0, -30.0), "EMP Recharging (%.1fs)" % _emp_cooldown, Color(1.0, 0.6, 0.3))
+		return
+	if oxygen < 6.0:
+		_spawn_floating_cash_text(position + Vector2(0.0, -30.0), "Low O2 for EMP!", Color(1.0, 0.4, 0.4))
+		return
+
+	# Deduct 6.0 Oxygen and set 3.0s cooldown
+	oxygen = maxf(oxygen - 6.0, 0.0)
+	_emp_cooldown = EMP_COOLDOWN_TIME
+	oxygen_changed.emit(oxygen, max_oxygen)
+	if oxygen <= 0.0:
+		oxygen_depleted.emit()
+
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("play_sfx"):
+		bp.play_sfx("hit")
+
+	# Aim direction: movement direction, facing, or toward mouse
+	var aim_dir: Vector2 = Vector2.RIGHT if default_facing_right else Vector2.LEFT
+	if velocity.length_squared() > 100.0:
+		aim_dir = velocity.normalized()
+	elif use_mouse_aim and is_inside_tree() and get_viewport() != null:
+		var mouse_pos = get_global_mouse_position()
+		if mouse_pos != Vector2.ZERO:
+			var to_mouse = (mouse_pos - global_position).normalized()
+			if to_mouse != Vector2.ZERO:
+				aim_dir = to_mouse
+
+	# Electric Shockwave Arc Visuals
+	var parent_ocean = get_parent() if get_parent() != null else self
+	var emp_fx := Node2D.new()
+	emp_fx.name = "EMPShockwave"
+	emp_fx.global_position = global_position
+	emp_fx.rotation = aim_dir.angle()
+
+	var unshaded_mat := CanvasItemMaterial.new()
+	unshaded_mat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+
+	# Curved electric arc
+	var arc := Line2D.new()
+	arc.material = unshaded_mat
+	arc.width = 5.0
+	arc.default_color = Color(0.3, 0.95, 1.0, 0.95)
+	var arc_pts := PackedVector2Array()
+	var arc_angles = [-0.65, -0.4, -0.15, 0.0, 0.15, 0.4, 0.65]
+	for a in arc_angles:
+		var r: float = randf_range(180.0, 220.0)
+		arc_pts.append(Vector2(cos(a) * r, sin(a) * r))
+	arc.points = arc_pts
+	emp_fx.add_child(arc)
+
+	# Lightning bolts radiating forward
+	for bolt_i in range(5):
+		var bolt := Line2D.new()
+		bolt.material = unshaded_mat
+		bolt.width = 2.5
+		bolt.default_color = Color(0.7, 1.0, 1.0, 0.9)
+		var b_pts := PackedVector2Array([Vector2.ZERO])
+		var cur_p := Vector2.ZERO
+		var target_angle: float = randf_range(-0.55, 0.55)
+		var steps: int = 5
+		for s in range(steps):
+			var dist_step: float = 200.0 / float(steps)
+			cur_p += Vector2(cos(target_angle), sin(target_angle)) * dist_step + Vector2(randf_range(-10.0, 10.0), randf_range(-15.0, 15.0))
+			b_pts.append(cur_p)
+		bolt.points = b_pts
+		emp_fx.add_child(bolt)
+
+	parent_ocean.add_child(emp_fx)
+
+	var fx_tween := emp_fx.create_tween().set_parallel(true)
+	fx_tween.tween_property(emp_fx, "scale", Vector2(1.25, 1.25), 0.35).from(Vector2(0.2, 0.2))
+	fx_tween.tween_property(emp_fx, "modulate:a", 0.0, 0.35)
+	fx_tween.chain().tween_callback(emp_fx.queue_free)
+
+	# Stun all Security Drones in forward arc
+	var drones = get_tree().get_nodes_in_group("security_drones") if get_tree() != null else []
+	var hit_count: int = 0
+	for drone in drones:
+		if not is_instance_valid(drone) or not drone.is_inside_tree():
+			continue
+		var to_drone: Vector2 = drone.global_position - global_position
+		var d_dist: float = to_drone.length()
+		var d_dot: float = aim_dir.dot(to_drone.normalized()) if d_dist > 0.0 else 1.0
+		if d_dist <= 240.0 and (d_dot > 0.25 or d_dist <= 70.0):
+			if drone.has_method("stun"):
+				drone.stun(4.0)
+				hit_count += 1
+
+	if hit_count > 0:
+		_spawn_floating_cash_text(position + Vector2(0.0, -36.0), "EMP Stunned %d Drone(s)!" % hit_count, Color(0.4, 1.0, 1.0))
+	else:
+		_spawn_floating_cash_text(position + Vector2(0.0, -36.0), "EMP Pulse Discharged!", Color(0.6, 0.85, 1.0))
+
+	_update_ui()
+
+
 ## Updates the HUD stats label with current oxygen %, depth (m), historical zone, gold, and cargo weight.
 func _update_ui() -> void:
 	if _hud_label == null:
@@ -1351,8 +1597,9 @@ func _update_ui() -> void:
 	var bp_count: int = int(backpack.blueprints) if backpack != null else 0
 	var cur_day: int = int(backpack.current_day) if backpack != null else 1
 
-	_hud_label.text = "Day: %d  |  Oxygen: %3.0f / %3.0f%s%s\nDepth:  %5.1f m  (%s)\nGold:   $%d  |  Blueprints: %d\nCargo:  %4.1f / %4.1f kg%s\n[TAB / I] Manifest" % [
-		cur_day, oxygen, cur_max_o2, status_text, pressure_note, depth, zone_str, player_gold, bp_count, cur_w, max_w, cargo_status
+	var emp_status: String = "[SPACE/LMB] EMP (6 O2)" if _emp_cooldown <= 0.0 else "[EMP Rchg %.1fs]" % _emp_cooldown
+	_hud_label.text = "Day: %d  |  Oxygen: %3.0f / %3.0f%s%s\nDepth:  %5.1f m  (%s)\nGold:   $%d  |  Blueprints: %d\nCargo:  %4.1f / %4.1f kg%s\nTools:  [Q/RMB] Sonar (4 O2)  |  %s  |  [TAB] Manifest" % [
+		cur_day, oxygen, cur_max_o2, status_text, pressure_note, depth, zone_str, player_gold, bp_count, cur_w, max_w, cargo_status, emp_status
 	]
 
 	if oxygen <= 25.0 and not _is_surfaced:
@@ -1675,14 +1922,58 @@ class SecurityDrone extends Area2D:
 	var sensor_cone: Polygon2D
 	var red_eye: Polygon2D
 	var hit_cooldown: float = 0.0
+	var stun_timer: float = 0.0
 
 	func _ready() -> void:
+		add_to_group("security_drones")
 		base_position_y = position.y
 		_create_collision()
 		_create_visuals()
 		body_entered.connect(_on_body_entered)
 
+	## Stuns the drone for duration seconds: freezes motion, disables sensor cone, sparks cyan.
+	func stun(duration: float = 4.0) -> void:
+		stun_timer = duration
+		hit_cooldown = duration + 0.5
+		if body_polygon != null:
+			body_polygon.color = Color(0.2, 0.85, 1.0)
+		if sensor_cone != null:
+			sensor_cone.color.a = 0.0
+		if red_eye != null:
+			red_eye.color = Color(0.0, 1.0, 1.0)
+
+		# Spawn electric spark particles
+		for s in range(5):
+			var spark := Line2D.new()
+			var smat := CanvasItemMaterial.new()
+			smat.light_mode = CanvasItemMaterial.LIGHT_MODE_UNSHADED
+			spark.material = smat
+			spark.width = 2.0
+			spark.default_color = Color(0.4, 1.0, 1.0)
+			spark.points = PackedVector2Array([
+				Vector2(randf_range(-15.0, 15.0), randf_range(-10.0, 10.0)),
+				Vector2(randf_range(-25.0, 25.0), randf_range(-20.0, 20.0))
+			])
+			add_child(spark)
+			var st := spark.create_tween()
+			st.tween_property(spark, "modulate:a", 0.0, 0.4 + randf() * 0.2)
+			st.tween_callback(spark.queue_free)
+
 	func _physics_process(delta: float) -> void:
+		if stun_timer > 0.0:
+			stun_timer -= delta
+			# Electric jitter while stunned
+			position.x += randf_range(-1.2, 1.2)
+			if stun_timer <= 0.0:
+				# Restore normal drone visuals
+				if body_polygon != null:
+					body_polygon.color = Color(0.18, 0.22, 0.28)
+				if sensor_cone != null:
+					sensor_cone.color = Color(1.0, 0.15, 0.15, 0.25)
+				if red_eye != null:
+					red_eye.color = Color(1.0, 0.2, 0.2)
+			return
+
 		if hit_cooldown > 0.0:
 			hit_cooldown -= delta
 

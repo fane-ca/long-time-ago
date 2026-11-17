@@ -184,12 +184,176 @@ var _codex_modal: Control = null
 var _codex_scroll: ScrollContainer = null
 var _codex_content_vbox: VBoxContainer = null
 
+## Zero-Dependency Procedural Retro Audio Synthesizer (AudioStreamGenerator)
+var _sfx_players: Array[AudioStreamPlayer] = []
+var _sfx_generators: Array[AudioStreamGenerator] = []
+var _sfx_pool_index: int = 0
+var _sfx_cache: Dictionary = {}
+
 
 func _ready() -> void:
+	_init_sfx()
 	_load_relics_from_json()
 	load_game()
 	if active_vip_quest.is_empty():
 		generate_daily_vip_quest()
+
+
+## Initializes a pool of 4 AudioStreamPlayers with AudioStreamGenerators for zero-latency procedural SFX.
+func _init_sfx() -> void:
+	if not _sfx_players.is_empty():
+		return
+	for i in range(4):
+		var p := AudioStreamPlayer.new()
+		p.name = "ProceduralSFXPlayer_%d" % i
+		var gen := AudioStreamGenerator.new()
+		gen.mix_rate = 22050.0
+		gen.buffer_length = 0.6
+		p.stream = gen
+		add_child(p)
+		_sfx_players.append(p)
+		_sfx_generators.append(gen)
+
+
+## Plays a zero-asset procedural retro sound effect synthesized in real-time.
+## Supported types: "pickup", "sonar", "laser_clean", "cash", "hit"
+func play_sfx(sfx_type: String) -> void:
+	if not is_inside_tree():
+		return
+	_init_sfx()
+	if _sfx_players.is_empty():
+		return
+
+	var frames: PackedVector2Array
+	if _sfx_cache.has(sfx_type):
+		frames = _sfx_cache[sfx_type]
+	else:
+		frames = _synthesize_sfx(sfx_type)
+		_sfx_cache[sfx_type] = frames
+
+	if frames.is_empty():
+		return
+
+	var player = _sfx_players[_sfx_pool_index]
+	_sfx_pool_index = (_sfx_pool_index + 1) % _sfx_players.size()
+	if player.is_inside_tree():
+		player.play()
+		var pb = player.get_stream_playback() as AudioStreamGeneratorPlayback
+		if pb != null:
+			pb.push_buffer(frames)
+
+
+## Synthesizes short retro waveforms (sine, square, frequency chirps, and noise bursts).
+func _synthesize_sfx(sfx_type: String) -> PackedVector2Array:
+	var mix_rate: float = 22050.0
+	var frames := PackedVector2Array()
+
+	match sfx_type:
+		"pickup":
+			# Rising two-tone chime (D5 587.3Hz -> A5 880.0Hz)
+			var n1_dur: float = 0.08
+			var n2_dur: float = 0.16
+			var n1_samples: int = int(n1_dur * mix_rate)
+			var n2_samples: int = int(n2_dur * mix_rate)
+
+			var f1: float = 587.33
+			for i in range(n1_samples):
+				var t: float = float(i) / mix_rate
+				var env: float = clampf(t / 0.008, 0.0, 1.0) * (1.0 - (float(i) / float(n1_samples)) * 0.25)
+				var val: float = (sin(t * f1 * TAU) * 0.5 + sin(t * f1 * 2.0 * TAU) * 0.15) * env
+				frames.append(Vector2(val, val))
+
+			var f2: float = 880.0
+			for i in range(n2_samples):
+				var t: float = float(i) / mix_rate
+				var env: float = exp(-t * 12.0)
+				var val: float = (sin(t * f2 * TAU) * 0.5 + sin(t * f2 * 2.0 * TAU) * 0.15) * env
+				frames.append(Vector2(val, val))
+
+		"sonar":
+			# High-pitched submarine ping with echo decay
+			var dur: float = 0.44
+			var total_samples: int = int(dur * mix_rate)
+			var f_ping: float = 1200.0
+
+			for i in range(total_samples):
+				var t: float = float(i) / mix_rate
+				var val: float = 0.0
+
+				# Main ping (t = 0 to 0.16)
+				if t < 0.16:
+					var p_t: float = t
+					var env1: float = clampf(p_t / 0.004, 0.0, 1.0) * exp(-p_t * 14.0)
+					val += sin(p_t * f_ping * TAU) * 0.55 * env1
+
+				# Echo 1 (t = 0.16 to 0.30)
+				if t >= 0.16 and t < 0.30:
+					var p_t: float = t - 0.16
+					var env2: float = clampf(p_t / 0.005, 0.0, 1.0) * exp(-p_t * 16.0)
+					val += sin(p_t * (f_ping * 0.94) * TAU) * 0.22 * env2
+
+				# Echo 2 (t = 0.30 to 0.44)
+				if t >= 0.30:
+					var p_t: float = t - 0.30
+					var env3: float = clampf(p_t / 0.005, 0.0, 1.0) * exp(-p_t * 18.0)
+					val += sin(p_t * (f_ping * 0.88) * TAU) * 0.10 * env3
+
+				frames.append(Vector2(val, val))
+
+		"laser_clean":
+			# Short crisp zapping/chipping sound (2200Hz -> 280Hz chirp + crunchy noise)
+			var dur: float = 0.08
+			var total_samples: int = int(dur * mix_rate)
+			var phase: float = 0.0
+
+			for i in range(total_samples):
+				var t: float = float(i) / mix_rate
+				var prog: float = float(i) / float(total_samples)
+				var cur_f: float = lerpf(2200.0, 280.0, prog)
+				phase += (cur_f / mix_rate) * TAU
+
+				var env: float = clampf(t / 0.004, 0.0, 1.0) * (1.0 - prog)
+				var chirp: float = sin(phase) * 0.42
+				var noise: float = randf_range(-0.18, 0.18) * exp(-prog * 4.0)
+				var val: float = (chirp + noise) * env
+				frames.append(Vector2(val, val))
+
+		"cash":
+			# Bright coin register arpeggio (B5 987Hz -> E6 1318Hz -> A6 1760Hz)
+			var notes: Array[float] = [987.77, 1318.51, 1760.00]
+			var note_durs: Array[float] = [0.055, 0.055, 0.16]
+
+			for n in range(notes.size()):
+				var f_note: float = notes[n]
+				var n_dur: float = note_durs[n]
+				var n_samples: int = int(n_dur * mix_rate)
+				for i in range(n_samples):
+					var t: float = float(i) / mix_rate
+					var env: float = clampf(t / 0.005, 0.0, 1.0) * exp(-t * (10.0 if n == 2 else 16.0))
+					var s: float = sin(t * f_note * TAU)
+					var tri: float = asin(clampf(s, -1.0, 1.0)) * (2.0 / PI)
+					var val: float = (s * 0.6 + tri * 0.4) * 0.45 * env
+					frames.append(Vector2(val, val))
+
+		"hit":
+			# Low rumble buzzer when hitting underwater hazard (85Hz drop + noise)
+			var dur: float = 0.24
+			var total_samples: int = int(dur * mix_rate)
+			var phase: float = 0.0
+
+			for i in range(total_samples):
+				var t: float = float(i) / mix_rate
+				var prog: float = float(i) / float(total_samples)
+				var cur_f: float = lerpf(90.0, 48.0, prog)
+				phase += (cur_f / mix_rate) * TAU
+
+				var env: float = clampf(t / 0.008, 0.0, 1.0) * exp(-prog * 4.5)
+				var buzz: float = signf(sin(phase)) * 0.35
+				var rumble: float = randf_range(-0.25, 0.25) * (1.0 - prog)
+				var val: float = (buzz + rumble) * 0.55 * env
+				frames.append(Vector2(val, val))
+
+	return frames
 
 
 ## Loads data-driven relics definitions from res://relics_data.json
@@ -222,10 +386,24 @@ func _load_relics_from_json() -> void:
 # Smart Sprite Auto-Loader Pipeline (Direction 4)
 # ==============================================================================
 
+## Animated Smart Sprite that automatically cycles horizontal animation sheets
+class SmartAnimatedSprite extends Sprite2D:
+	var frame_speed: float = 8.0 # frames per second
+	var _anim_timer: float = 0.0
+
+	func _process(delta: float) -> void:
+		if hframes > 1 and is_visible_in_tree():
+			_anim_timer += delta
+			var interval: float = 1.0 / maxf(frame_speed, 1.0)
+			if _anim_timer >= interval:
+				_anim_timer = 0.0
+				frame = (frame + 1) % hframes
+
+
 ## Dynamically loads a PNG texture if it exists on disk, centers & scales it to target_node,
+## auto-detects horizontal animation strips (width >= height * 2), sets NEAREST filter,
 ## and hides procedural placeholder geometry (Polygon2D, ColorRect, Line2D).
-## If missing, preserves procedural geometry without error.
-static func load_smart_sprite(target_node: Node2D, path: String, fallback_size: Vector2 = Vector2.ZERO) -> Sprite2D:
+static func load_smart_sprite(target_node: Node2D, path: String, target_size: Vector2 = Vector2.ZERO, pivot_offset: Vector2 = Vector2.ZERO) -> Sprite2D:
 	if target_node == null or path.is_empty():
 		return null
 
@@ -237,21 +415,33 @@ static func load_smart_sprite(target_node: Node2D, path: String, fallback_size: 
 		return null
 
 	# Check if target_node already has a SmartSprite child
-	var existing: Sprite2D = target_node.get_node_or_null("SmartSprite") as Sprite2D
-	if existing != null:
-		existing.texture = tex
-		return existing
+	var sprite: SmartAnimatedSprite = target_node.get_node_or_null("SmartSprite") as SmartAnimatedSprite
+	if sprite == null:
+		sprite = SmartAnimatedSprite.new()
+		sprite.name = "SmartSprite"
+		target_node.add_child(sprite)
 
-	var sprite := Sprite2D.new()
-	sprite.name = "SmartSprite"
 	sprite.texture = tex
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	sprite.offset = pivot_offset
 
-	if fallback_size != Vector2.ZERO and tex.get_width() > 0 and tex.get_height() > 0:
-		var sx: float = fallback_size.x / float(tex.get_width())
-		var sy: float = fallback_size.y / float(tex.get_height())
-		sprite.scale = Vector2(sx, sy)
+	var tw: float = float(tex.get_width())
+	var th: float = float(tex.get_height())
+	var h_frames: int = 1
+	if th > 0.0 and tw >= th * 2.0:
+		h_frames = int(tw / th)
+		sprite.hframes = h_frames
+		sprite.frame = 0
+	else:
+		sprite.hframes = 1
+		sprite.frame = 0
 
-	target_node.add_child(sprite)
+	var frame_w: float = tw / float(h_frames)
+	var frame_h: float = th
+	if target_size != Vector2.ZERO and frame_w > 0.0 and frame_h > 0.0:
+		sprite.scale = Vector2(target_size.x / frame_w, target_size.y / frame_h)
+	else:
+		sprite.scale = Vector2.ONE
 
 	# Automatically hide procedural placeholder sibling geometry
 	for child in target_node.get_children():
@@ -294,7 +484,7 @@ func _spawn_floating_cash_text(pos: Vector2, text: String, color: Color = Color(
 
 ## Builds or updates a consistent player character with modular equipment paper-doll layers.
 ## Supports both swimming (horizontal side-scroller) and upright (2.5D top-down) stances.
-func build_character_visuals(target_node: Node2D, is_swimming_mode: bool = false, use_custom_sprite: bool = false) -> Node2D:
+func build_character_visuals(target_node: Node2D, is_swimming_mode: bool = false, use_custom_sprite: bool = true) -> Node2D:
 	if target_node == null:
 		return null
 
@@ -319,19 +509,46 @@ func build_character_visuals(target_node: Node2D, is_swimming_mode: bool = false
 
 
 # ==============================================================================
-# PlayerVisuals: Modular Paper-Doll Character Class
+# VisualRig & CharacterAnimator: Modular Articulated Character System
 # ==============================================================================
-class PlayerVisuals extends Node2D:
+
+class CharacterAnimator extends Node:
+	var rig: Node2D = null
+
+	func _init(p_rig: Node2D = null) -> void:
+		rig = p_rig
+
+
+class VisualRig extends Node2D:
 	var bp_ref: Node = null
 	var is_swimming: bool = false
-	var use_custom_sprite: bool = false
+	var use_custom_sprite: bool = true
+	var has_custom_sprite: bool = false
 
+	# Articulated Child Pivots
+	var body_pivot: Node2D
+	var head_mask_pivot: Node2D
+	var back_tank_pivot: Node2D
+	var fins_pivot: Node2D
+	var exo_frame_pivot: Node2D
+	var ground_shadow: Polygon2D
+	var animator: CharacterAnimator
+
+	# Compatibility Slot Aliases
 	var body_container: Node2D
 	var tank_slot: Node2D
 	var mask_slot: Node2D
 	var fins_slot: Node2D
 	var exo_slot: Node2D
-	var ground_shadow: Polygon2D
+
+	enum Facing { DOWN, UP, LEFT, RIGHT }
+	var current_facing: Facing = Facing.DOWN
+	var anim_time: float = 0.0
+	var walk_time: float = 0.0
+	var bubble_timer: float = 0.0
+	var hydrojet_timer: float = 0.0
+	var dust_timer: float = 0.0
+	var aim_target: Vector2 = Vector2.ZERO
 
 	const COLOR_SUIT: Color = Color("#E5A93B") # Signature mustard-yellow hazmat
 	const COLOR_SUIT_SHADOW: Color = Color("#B87E1E") # Darker seam/shading
@@ -355,62 +572,301 @@ class PlayerVisuals extends Node2D:
 		)
 
 	func _setup_layers() -> void:
-		# Layering order:
-		# 1. Shadow (on ground for upright pose)
-		# 2. Fins Slot (at rear feet for swimming)
-		# 3. Tank Slot (behind torso/dorsal back)
-		# 4. Body Container (legs, boots, torso, arms, head, hood)
-		# 5. Exo Slot (wraps torso and shoulders on both land and water)
-		# 6. Mask Slot (face visor / helmet porthole)
+		animator = CharacterAnimator.new(self)
+		animator.name = "CharacterAnimator"
+		add_child(animator)
 
 		if not is_swimming:
-			ground_shadow = Polygon2D.new()
-			ground_shadow.name = "GroundShadow"
-			ground_shadow.polygon = _make_ellipse(15.0, 6.0, Vector2(0.0, 0.0))
-			ground_shadow.color = Color(0.0, 0.0, 0.0, 0.38)
-			add_child(ground_shadow)
+			var existing_shadow = null
+			if get_parent() != null:
+				for c in get_parent().get_children():
+					if c is Polygon2D and (c.name.to_lower().contains("shadow") or c.name == "GroundShadow"):
+						existing_shadow = c
+						break
+			if existing_shadow == null:
+				ground_shadow = Polygon2D.new()
+				ground_shadow.name = "GroundShadow"
+				ground_shadow.polygon = _make_ellipse(15.0, 6.0, Vector2(0.0, 0.0))
+				ground_shadow.color = Color(0.0, 0.0, 0.0, 0.38)
+				add_child(ground_shadow)
 
-		fins_slot = Node2D.new()
-		fins_slot.name = "FinsVisual"
-		add_child(fins_slot)
+		fins_pivot = Node2D.new()
+		fins_pivot.name = "FinsPivot"
+		if is_swimming:
+			fins_pivot.position = Vector2(-20.0, 3.0) # Ankle pivot
+		add_child(fins_pivot)
+		fins_slot = fins_pivot
 
-		tank_slot = Node2D.new()
-		tank_slot.name = "TankVisual"
-		add_child(tank_slot)
+		back_tank_pivot = Node2D.new()
+		back_tank_pivot.name = "BackTankPivot"
+		if is_swimming:
+			back_tank_pivot.position = Vector2(-2.0, -9.0)
+		else:
+			back_tank_pivot.position = Vector2(0.0, -28.0)
+		add_child(back_tank_pivot)
+		tank_slot = back_tank_pivot
 
-		body_container = Node2D.new()
-		body_container.name = "BodyContainer"
-		add_child(body_container)
+		body_pivot = Node2D.new()
+		body_pivot.name = "BodyPivot"
+		add_child(body_pivot)
+		body_container = body_pivot
 
-		exo_slot = Node2D.new()
-		exo_slot.name = "ExoVisual"
-		add_child(exo_slot)
+		exo_frame_pivot = Node2D.new()
+		exo_frame_pivot.name = "ExoFramePivot"
+		if is_swimming:
+			exo_frame_pivot.position = Vector2(-1.0, 0.0)
+		else:
+			exo_frame_pivot.position = Vector2(0.0, -24.0)
+		add_child(exo_frame_pivot)
+		exo_slot = exo_frame_pivot
 
-		mask_slot = Node2D.new()
-		mask_slot.name = "MaskVisual"
-		add_child(mask_slot)
+		head_mask_pivot = Node2D.new()
+		head_mask_pivot.name = "HeadMaskPivot"
+		if is_swimming:
+			head_mask_pivot.position = Vector2(18.0, -2.0)
+		else:
+			head_mask_pivot.position = Vector2(0.0, -40.0)
+		add_child(head_mask_pivot)
+		mask_slot = head_mask_pivot
 
 		_build_base_body()
 
-	func _build_base_body() -> void:
-		# Check if custom sprite is explicitly requested and exists
-		if use_custom_sprite:
-			var sprite_path: String = "res://assets/characters/diver.png" if is_swimming else "res://assets/characters/survivor.png"
-			if ResourceLoader.exists(sprite_path):
-				var tex := load(sprite_path) as Texture2D
-				if tex != null:
-					var spr := Sprite2D.new()
-					spr.name = "CustomBodySprite"
-					spr.texture = tex
-					var target_size: Vector2 = Vector2(48.0, 48.0)
-					if tex.get_width() > 0 and tex.get_height() > 0:
-						spr.scale = Vector2(target_size.x / float(tex.get_width()), target_size.y / float(tex.get_height()))
-					if not is_swimming:
-						spr.position = Vector2(0.0, -24.0)
-					body_container.add_child(spr)
-					return
+	func set_aim_target(target_pos: Vector2) -> void:
+		aim_target = target_pos
 
-		# Signature Mustard-Yellow Hazmat Suit & Slate Pads
+	func _process(delta: float) -> void:
+		var parent_body := get_parent() as CharacterBody2D
+		var vel: Vector2 = parent_body.velocity if parent_body != null else Vector2.ZERO
+
+		if is_swimming:
+			_process_swimming_animation(vel, delta)
+		else:
+			_process_walking_animation(vel, delta)
+
+	func _process_swimming_animation(vel: Vector2, delta: float) -> void:
+		var spd: float = vel.length()
+		anim_time += delta * (1.0 + (spd / 200.0) * 2.0)
+
+		# Horizontal orientation & smooth flipping
+		if vel.x > 8.0:
+			scale.x = move_toward(scale.x, 1.0, delta * 12.0)
+		elif vel.x < -8.0:
+			scale.x = move_toward(scale.x, -1.0, delta * 12.0)
+
+		var facing_sign: float = 1.0 if scale.x >= 0.0 else -1.0
+
+		if spd < 10.0:
+			# Idle Treading Water: gentle vertical sine-wave bobbing & pitch oscillation
+			body_pivot.position.y = sin(anim_time * 2.5) * 4.0
+			body_pivot.rotation = lerp_angle(body_pivot.rotation, sin(anim_time * 1.8) * 0.05, delta * 6.0)
+			body_pivot.scale = body_pivot.scale.lerp(Vector2.ONE, delta * 8.0)
+			fins_pivot.rotation = sin(anim_time * 3.0) * 0.2
+		else:
+			# Active Swimming: tilts into movement vector (±25° / ±0.436 rad), speed-scaled wave, axial stretch
+			var pitch_angle: float = clampf(vel.normalized().y * 0.436 * facing_sign, -0.436, 0.436)
+			body_pivot.rotation = lerp_angle(body_pivot.rotation, pitch_angle, delta * 8.0)
+			body_pivot.position.y = sin(anim_time * (2.5 + (spd / 200.0) * 6.0)) * 2.5
+
+			var stretch: float = 1.0 + clampf(spd / 600.0, 0.0, 0.12)
+			var squash: float = 1.0 - clampf(spd / 1200.0, 0.0, 0.06)
+			body_pivot.scale = body_pivot.scale.lerp(Vector2(stretch, squash), delta * 8.0)
+
+			var kick_speed: float = 3.0 + (spd / 200.0) * 11.0
+			fins_pivot.rotation = sin(anim_time * kick_speed) * 0.35
+
+			var f_lvl: int = int(bp_ref.get("fins_level")) if (bp_ref != null and bp_ref.get("fins_level") != null) else 1
+			if f_lvl >= 3:
+				hydrojet_timer += delta
+				if hydrojet_timer >= 0.07:
+					hydrojet_timer = 0.0
+					_spawn_hydrojet_thrust(vel)
+
+		# Oxygen Tank bubble particles
+		bubble_timer += delta
+		var b_interval: float = 2.0 if spd < 15.0 else 1.2
+		if bubble_timer >= b_interval:
+			bubble_timer = 0.0
+			_spawn_tank_bubble()
+
+		# Mask & headlamp cone aim tracking
+		var target_aim_angle: float = 0.0
+		if aim_target != Vector2.ZERO:
+			var diff := aim_target - head_mask_pivot.global_position
+			target_aim_angle = diff.angle()
+			if scale.x < 0.0:
+				target_aim_angle = PI - target_aim_angle
+		elif spd > 15.0:
+			target_aim_angle = clampf(vel.normalized().y * 0.5 * facing_sign, -0.55, 0.55)
+		head_mask_pivot.rotation = lerp_angle(head_mask_pivot.rotation, target_aim_angle, delta * 8.0)
+
+	func _process_walking_animation(vel: Vector2, delta: float) -> void:
+		var spd: float = vel.length()
+
+		if spd > 5.0:
+			if absf(vel.y) > absf(vel.x) * 1.1:
+				current_facing = Facing.UP if vel.y < 0.0 else Facing.DOWN
+			else:
+				current_facing = Facing.LEFT if vel.x < 0.0 else Facing.RIGHT
+
+			_update_perspective_for_facing()
+
+			walk_time += delta
+			body_pivot.position.y = -absf(sin(walk_time * 14.0)) * 5.0
+			body_pivot.rotation = sin(walk_time * 14.0) * 0.12
+			body_pivot.scale.y = 1.0 + sin(walk_time * 14.0) * 0.08
+			body_pivot.scale.x = 1.0 - sin(walk_time * 14.0) * 0.05
+
+			dust_timer += delta
+			if dust_timer >= 0.22:
+				dust_timer = 0.0
+				_spawn_footstep_dust()
+		else:
+			body_pivot.position.y = lerpf(body_pivot.position.y, 0.0, delta * 12.0)
+			body_pivot.rotation = lerp_angle(body_pivot.rotation, 0.0, delta * 12.0)
+			body_pivot.scale = body_pivot.scale.lerp(Vector2.ONE, delta * 12.0)
+
+	func _update_perspective_for_facing() -> void:
+		if is_swimming:
+			return
+
+		var exo_lvl: int = int(bp_ref.get("exo_level")) if (bp_ref != null and bp_ref.get("exo_level") != null) else 1
+
+		if current_facing == Facing.UP:
+			scale.x = 1.0
+			exo_frame_pivot.z_index = 2
+			exo_frame_pivot.position = Vector2(0.0, -25.0)
+			back_tank_pivot.z_index = 1
+			back_tank_pivot.position = Vector2(0.0, -28.0)
+			head_mask_pivot.visible = false
+			body_pivot.z_index = 0
+			_check_view_specific_gear("back", exo_lvl)
+
+		elif current_facing == Facing.DOWN:
+			scale.x = 1.0
+			exo_frame_pivot.z_index = -1
+			exo_frame_pivot.position = Vector2(0.0, -25.0)
+			back_tank_pivot.z_index = -2
+			back_tank_pivot.position = Vector2(0.0, -28.0)
+			head_mask_pivot.z_index = 2
+			head_mask_pivot.visible = true
+			head_mask_pivot.position = Vector2(0.0, -40.0)
+			body_pivot.z_index = 0
+			_check_view_specific_gear("front", exo_lvl)
+
+		elif current_facing == Facing.LEFT or current_facing == Facing.RIGHT:
+			scale.x = -1.0 if current_facing == Facing.LEFT else 1.0
+			exo_frame_pivot.z_index = 1
+			exo_frame_pivot.position = Vector2(-2.0, -22.0)
+			back_tank_pivot.z_index = -1
+			back_tank_pivot.position = Vector2(-7.0, -25.0)
+			head_mask_pivot.z_index = 2
+			head_mask_pivot.visible = true
+			head_mask_pivot.position = Vector2(3.0, -40.0)
+			body_pivot.z_index = 0
+			_check_view_specific_gear("side", exo_lvl)
+
+	func _check_view_specific_gear(view_suffix: String, exo_lvl: int) -> void:
+		var custom_exo := "res://assets/gear/exo_lv%d_%s.png" % [exo_lvl, view_suffix]
+		if ResourceLoader.exists(custom_exo):
+			var spr = exo_frame_pivot.get_node_or_null("SmartSprite") as Sprite2D
+			if spr == null or spr.texture.resource_path != custom_exo:
+				_clear_slot(exo_frame_pivot)
+				if bp_ref != null and bp_ref.has_method("load_smart_sprite"):
+					bp_ref.load_smart_sprite(exo_frame_pivot, custom_exo, Vector2(30.0, 26.0))
+
+	func _spawn_tank_bubble() -> void:
+		var world = get_parent()
+		if world == null or not is_inside_tree():
+			return
+		var spawn_pos: Vector2 = back_tank_pivot.global_position + Vector2(randf_range(-4.0, 4.0), -8.0)
+		var bubble := Polygon2D.new()
+		bubble.polygon = _make_ellipse(2.5, 2.5)
+		bubble.color = Color(0.8, 0.95, 1.0, 0.6)
+
+		var spec := Polygon2D.new()
+		spec.polygon = _make_ellipse(0.8, 0.8, Vector2(0.8, -0.8))
+		spec.color = Color(1.0, 1.0, 1.0, 0.9)
+		bubble.add_child(spec)
+
+		bubble.global_position = spawn_pos
+		world.add_child(bubble)
+
+		var tween := bubble.create_tween().set_parallel(true)
+		var rise_y: float = spawn_pos.y - randf_range(35.0, 60.0)
+		var drift_x: float = spawn_pos.x + randf_range(-8.0, 8.0)
+		tween.tween_property(bubble, "global_position:y", rise_y, 1.2).set_ease(Tween.EASE_OUT)
+		tween.tween_property(bubble, "global_position:x", drift_x, 1.2).set_ease(Tween.EASE_IN_OUT)
+		tween.tween_property(bubble, "scale", Vector2(1.3, 1.3), 1.2)
+		tween.tween_property(bubble, "modulate:a", 0.0, 1.2).set_ease(Tween.EASE_IN)
+		tween.chain().tween_callback(bubble.queue_free)
+
+	func _spawn_hydrojet_thrust(vel: Vector2) -> void:
+		var world = get_parent()
+		if world == null or not is_inside_tree():
+			return
+		var dir := -vel.normalized() if vel.length() > 0.0 else Vector2(-1.0, 0.0)
+		var spawn_pos: Vector2 = fins_pivot.global_position + Vector2(randf_range(-3.0, 3.0), randf_range(-3.0, 3.0))
+
+		var jet := Polygon2D.new()
+		jet.polygon = _make_ellipse(2.2, 2.2)
+		jet.color = Color(0.0, 1.0, 1.0, 0.85)
+		var add_mat := CanvasItemMaterial.new()
+		add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		jet.material = add_mat
+		jet.global_position = spawn_pos
+		world.add_child(jet)
+
+		var tween := jet.create_tween().set_parallel(true)
+		tween.tween_property(jet, "global_position", spawn_pos + (dir * randf_range(12.0, 24.0)), 0.22)
+		tween.tween_property(jet, "scale", Vector2(0.2, 0.2), 0.22)
+		tween.tween_property(jet, "modulate:a", 0.0, 0.22)
+		tween.chain().tween_callback(jet.queue_free)
+
+	func _spawn_footstep_dust() -> void:
+		var world = get_parent()
+		if world == null or not is_inside_tree():
+			return
+		var dust := Polygon2D.new()
+		dust.polygon = _make_ellipse(3.0, 1.8)
+		dust.color = Color(0.82, 0.78, 0.70, 0.45)
+		dust.global_position = global_position + Vector2(randf_range(-4.0, 4.0), randf_range(-1.0, 2.0))
+		world.add_child(dust)
+
+		var tween := dust.create_tween().set_parallel(true)
+		tween.tween_property(dust, "scale", Vector2(2.2, 1.4), 0.32).set_ease(Tween.EASE_OUT)
+		tween.tween_property(dust, "modulate:a", 0.0, 0.32).set_ease(Tween.EASE_IN)
+		tween.chain().tween_callback(dust.queue_free)
+
+	func _build_base_body() -> void:
+		var char_tex_path: String = "res://assets/characters/diver.png" if is_swimming else "res://assets/characters/survivor.png"
+		var exists: bool = ResourceLoader.exists(char_tex_path) or FileAccess.file_exists(char_tex_path)
+		if exists:
+			var tex := load(char_tex_path) as Texture2D
+			if tex != null:
+				var spr := Sprite2D.new()
+				spr.name = "CharacterSprite"
+				spr.texture = tex
+				spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+				var max_dim: float = 72.0 if is_swimming else 64.0
+				var tex_w: float = float(tex.get_width())
+				var tex_h: float = float(tex.get_height())
+				var tex_max: float = maxf(tex_w, tex_h)
+				var scale_factor: float = max_dim / maxf(tex_max, 1.0)
+				spr.scale = Vector2(scale_factor, scale_factor)
+
+				if is_swimming:
+					spr.position = Vector2.ZERO
+				else:
+					spr.position = Vector2(0.0, -max_dim * 0.5)
+
+				body_pivot.add_child(spr)
+				has_custom_sprite = true
+				print("Loaded custom character sprite: " + char_tex_path)
+				return
+
+		# Fallback: Procedural Mustard-Yellow Hazmat Suit & Slate Pads
+		has_custom_sprite = false
 		if is_swimming:
 			_build_swimming_body()
 		else:
@@ -752,41 +1208,45 @@ class PlayerVisuals extends Node2D:
 	func _build_tank_visual(level: int) -> void:
 		_clear_slot(tank_slot)
 
+		# Skip if using custom sprite and level <= 1 (base tank already visible on sprite!)
+		if has_custom_sprite and level <= 1:
+			return
+
 		var custom_tex_path: String = "res://assets/gear/tank_lv%d.png" % level
 		if ResourceLoader.exists(custom_tex_path):
 			var spr := _create_gear_sprite(custom_tex_path, Vector2(28.0, 24.0))
 			if spr != null:
-				spr.position = Vector2(-2.0, -12.0) if is_swimming else Vector2(7.0, -30.0)
+				spr.position = Vector2.ZERO
 				tank_slot.add_child(spr)
 				return
 
 		if is_swimming:
 			if level == 1:
-				# Single small rusty grey cylinder
+				# Single small rusty grey cylinder (procedural fallback only)
 				var tank := Polygon2D.new()
 				tank.polygon = PackedVector2Array([
-					Vector2(-12.0, -15.0), Vector2(6.0, -15.0),
-					Vector2(6.0, -9.0), Vector2(-12.0, -9.0)
+					Vector2(-10.0, -3.0), Vector2(8.0, -3.0),
+					Vector2(8.0, 3.0), Vector2(-10.0, 3.0)
 				])
 				tank.color = Color("#636B72")
 				tank_slot.add_child(tank)
 
 				var rust := Polygon2D.new()
 				rust.polygon = PackedVector2Array([
-					Vector2(-6.0, -14.0), Vector2(-1.0, -14.0),
-					Vector2(-2.0, -10.0), Vector2(-7.0, -10.0)
+					Vector2(-4.0, -2.0), Vector2(1.0, -2.0),
+					Vector2(0.0, 2.0), Vector2(-5.0, 2.0)
 				])
 				rust.color = Color("#8D5B2A")
 				tank_slot.add_child(rust)
 
 				var valve := ColorRect.new()
 				valve.color = Color("#2C3539")
-				valve.position = Vector2(6.0, -13.0)
+				valve.position = Vector2(8.0, -1.5)
 				valve.size = Vector2(3.0, 3.0)
 				tank_slot.add_child(valve)
 
 				var hose := Line2D.new()
-				hose.points = PackedVector2Array([Vector2(8.0, -12.0), Vector2(12.0, -10.0), Vector2(16.0, -4.0)])
+				hose.points = PackedVector2Array([Vector2(10.0, 0.0), Vector2(14.0, 2.0), Vector2(18.0, 6.0)])
 				hose.width = 1.5
 				hose.default_color = Color("#181D1F")
 				tank_slot.add_child(hose)
@@ -794,26 +1254,26 @@ class PlayerVisuals extends Node2D:
 				# Larger bright cyan high-pressure tank with gauge
 				var tank := Polygon2D.new()
 				tank.polygon = PackedVector2Array([
-					Vector2(-14.0, -17.0), Vector2(8.0, -17.0),
-					Vector2(8.0, -8.0), Vector2(-14.0, -8.0)
+					Vector2(-12.0, -5.0), Vector2(10.0, -5.0),
+					Vector2(10.0, 4.0), Vector2(-12.0, 4.0)
 				])
 				tank.color = Color("#00B4D8")
 				tank_slot.add_child(tank)
 
 				var highlight := Line2D.new()
-				highlight.points = PackedVector2Array([Vector2(-12.0, -15.5), Vector2(6.0, -15.5)])
+				highlight.points = PackedVector2Array([Vector2(-10.0, -3.5), Vector2(8.0, -3.5)])
 				highlight.width = 1.5
 				highlight.default_color = Color("#90E0EF")
 				tank_slot.add_child(highlight)
 
 				# Pressure dial gauge
 				var gauge := Polygon2D.new()
-				gauge.polygon = _make_ellipse(3.0, 3.0, Vector2(8.0, -13.0))
+				gauge.polygon = _make_ellipse(3.0, 3.0, Vector2(10.0, 0.0))
 				gauge.color = Color.WHITE
 				tank_slot.add_child(gauge)
 
 				var needle := Line2D.new()
-				needle.points = PackedVector2Array([Vector2(8.0, -13.0), Vector2(9.5, -14.5)])
+				needle.points = PackedVector2Array([Vector2(10.0, 0.0), Vector2(11.5, -1.5)])
 				needle.width = 1.0
 				needle.default_color = Color.RED
 				tank_slot.add_child(needle)
@@ -821,24 +1281,24 @@ class PlayerVisuals extends Node2D:
 				# Level 3+: Dual twin golden/plasma tanks with glowing core stripe!
 				var tank_top := Polygon2D.new()
 				tank_top.polygon = PackedVector2Array([
-					Vector2(-15.0, -19.0), Vector2(8.0, -19.0),
-					Vector2(8.0, -14.0), Vector2(-15.0, -14.0)
+					Vector2(-13.0, -7.0), Vector2(10.0, -7.0),
+					Vector2(10.0, -2.0), Vector2(-13.0, -2.0)
 				])
 				tank_top.color = Color("#E5A00D")
 				tank_slot.add_child(tank_top)
 
 				var tank_bot := Polygon2D.new()
 				tank_bot.polygon = PackedVector2Array([
-					Vector2(-15.0, -13.0), Vector2(8.0, -13.0),
-					Vector2(8.0, -8.0), Vector2(-15.0, -8.0)
+					Vector2(-13.0, 0.0), Vector2(10.0, 0.0),
+					Vector2(10.0, 5.0), Vector2(-13.0, 5.0)
 				])
 				tank_bot.color = Color("#E5A00D")
 				tank_slot.add_child(tank_bot)
 
 				# Glowing plasma core stripe between tanks
 				var plasma := Line2D.new()
-				plasma.points = PackedVector2Array([Vector2(-13.0, -13.5), Vector2(7.0, -13.5)])
-				plasma.width = 2.5
+				plasma.points = PackedVector2Array([Vector2(-11.0, -1.0), Vector2(8.0, -1.0)])
+				plasma.width = 2.0
 				plasma.default_color = Color("#00FFFF")
 				var add_mat := CanvasItemMaterial.new()
 				add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -847,53 +1307,54 @@ class PlayerVisuals extends Node2D:
 		else:
 			# Upright (2.5D Top-Down) Tank peeking over shoulders
 			if level == 1:
+				# Small rusty cylinder on back right (procedural fallback only)
 				var tank := Polygon2D.new()
 				tank.polygon = PackedVector2Array([
-					Vector2(4.0, -38.0), Vector2(10.0, -38.0),
-					Vector2(10.0, -22.0), Vector2(4.0, -22.0)
+					Vector2(5.0, -10.0), Vector2(10.0, -10.0),
+					Vector2(10.0, 6.0), Vector2(5.0, 6.0)
 				])
 				tank.color = Color("#636B72")
 				tank_slot.add_child(tank)
 
 				var valve := ColorRect.new()
 				valve.color = Color("#C8961E")
-				valve.position = Vector2(6.0, -40.0)
+				valve.position = Vector2(6.0, -12.0)
 				valve.size = Vector2(2.5, 3.0)
 				tank_slot.add_child(valve)
 			elif level == 2:
 				var tank := Polygon2D.new()
 				tank.polygon = PackedVector2Array([
-					Vector2(3.0, -41.0), Vector2(11.0, -41.0),
-					Vector2(11.0, -22.0), Vector2(3.0, -22.0)
+					Vector2(4.0, -12.0), Vector2(11.0, -12.0),
+					Vector2(11.0, 7.0), Vector2(4.0, 7.0)
 				])
 				tank.color = Color("#00B4D8")
 				tank_slot.add_child(tank)
 
 				var gauge := Polygon2D.new()
-				gauge.polygon = _make_ellipse(2.5, 2.5, Vector2(9.0, -36.0))
+				gauge.polygon = _make_ellipse(2.5, 2.5, Vector2(9.0, -8.0))
 				gauge.color = Color.WHITE
 				tank_slot.add_child(gauge)
 			else:
 				# Level 3+: Dual golden tanks flanking both shoulders
 				var tank_l := Polygon2D.new()
 				tank_l.polygon = PackedVector2Array([
-					Vector2(-11.0, -42.0), Vector2(-4.0, -42.0),
-					Vector2(-4.0, -22.0), Vector2(-11.0, -22.0)
+					Vector2(-11.0, -14.0), Vector2(-4.0, -14.0),
+					Vector2(-4.0, 6.0), Vector2(-11.0, 6.0)
 				])
 				tank_l.color = Color("#E5A00D")
 				tank_slot.add_child(tank_l)
 
 				var tank_r := Polygon2D.new()
 				tank_r.polygon = PackedVector2Array([
-					Vector2(4.0, -42.0), Vector2(11.0, -42.0),
-					Vector2(11.0, -22.0), Vector2(4.0, -22.0)
+					Vector2(4.0, -14.0), Vector2(11.0, -14.0),
+					Vector2(11.0, 6.0), Vector2(4.0, 6.0)
 				])
 				tank_r.color = Color("#E5A00D")
 				tank_slot.add_child(tank_r)
 
 				# Glowing plasma energy nodes
 				var glow_l := Polygon2D.new()
-				glow_l.polygon = _make_ellipse(2.5, 2.5, Vector2(-7.5, -42.5))
+				glow_l.polygon = _make_ellipse(2.5, 2.5, Vector2(-7.5, -14.5))
 				glow_l.color = Color("#00FFFF")
 				var add_mat := CanvasItemMaterial.new()
 				add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -901,7 +1362,7 @@ class PlayerVisuals extends Node2D:
 				tank_slot.add_child(glow_l)
 
 				var glow_r := Polygon2D.new()
-				glow_r.polygon = _make_ellipse(2.5, 2.5, Vector2(7.5, -42.5))
+				glow_r.polygon = _make_ellipse(2.5, 2.5, Vector2(7.5, -14.5))
 				glow_r.color = Color("#00FFFF")
 				glow_r.material = add_mat
 				tank_slot.add_child(glow_r)
@@ -910,60 +1371,54 @@ class PlayerVisuals extends Node2D:
 	func _build_mask_visual(level: int) -> void:
 		_clear_slot(mask_slot)
 
+		# Skip if using custom sprite and level <= 1 (base mask/helmet already visible on sprite!)
+		if has_custom_sprite and level <= 1:
+			return
+
+		var custom_tex_path: String = "res://assets/gear/mask_lv%d.png" % level
+		if ResourceLoader.exists(custom_tex_path):
+			var spr := _create_gear_sprite(custom_tex_path, Vector2(24.0, 20.0))
+			if spr != null:
+				spr.position = Vector2.ZERO
+				mask_slot.add_child(spr)
+				return
+
 		if is_swimming:
 			if level == 1:
-				# Basic glass goggles with rubber strap
+				# Basic glass goggles with rubber strap (procedural fallback only)
 				var strap := Line2D.new()
-				strap.points = PackedVector2Array([Vector2(11.0, -2.0), Vector2(19.0, -2.0)])
+				strap.points = PackedVector2Array([Vector2(-6.0, 0.0), Vector2(1.0, 0.0)])
 				strap.width = 1.5
 				strap.default_color = Color("#181D1F")
 				mask_slot.add_child(strap)
 
 				var lens := Polygon2D.new()
 				lens.polygon = PackedVector2Array([
-					Vector2(18.0, -5.0), Vector2(25.0, -5.0),
-					Vector2(24.0, 1.0), Vector2(18.0, 1.0)
+					Vector2(0.0, -3.0), Vector2(7.0, -3.0),
+					Vector2(6.0, 3.0), Vector2(0.0, 3.0)
 				])
 				lens.color = Color(0.55, 0.85, 0.95, 0.75)
 				mask_slot.add_child(lens)
 			elif level == 2:
 				# Brass deep-sea helmet with glowing cyan visor
 				var frame := Polygon2D.new()
-				frame.polygon = PackedVector2Array([
-					Vector2(17.0, -6.0), Vector2(26.0, -6.0),
-					Vector2(25.0, 3.0), Vector2(17.0, 3.0)
-				])
+				frame.polygon = _make_ellipse(5.0, 5.0, Vector2.ZERO)
 				frame.color = Color("#D49B24")
 				mask_slot.add_child(frame)
 
 				var viewport := Polygon2D.new()
-				viewport.polygon = PackedVector2Array([
-					Vector2(19.0, -4.5), Vector2(25.0, -4.5),
-					Vector2(24.0, 1.5), Vector2(19.0, 1.5)
-				])
+				viewport.polygon = _make_ellipse(3.5, 3.5, Vector2.ZERO)
 				viewport.color = Color(0.1, 0.95, 0.95, 0.88)
 				mask_slot.add_child(viewport)
 			else:
 				# Level 3+: High-tech neon magenta/gold abyssal visor
 				var frame := Polygon2D.new()
-				frame.polygon = PackedVector2Array([
-					Vector2(17.0, -7.0), Vector2(27.0, -6.0),
-					Vector2(26.0, 4.0), Vector2(17.0, 4.0)
-				])
+				frame.polygon = _make_ellipse(6.0, 5.0, Vector2.ZERO)
 				frame.color = Color("#181A20")
 				mask_slot.add_child(frame)
 
-				var gold_trim := Line2D.new()
-				gold_trim.points = PackedVector2Array([Vector2(17.0, -7.0), Vector2(27.0, -6.0), Vector2(26.0, 4.0)])
-				gold_trim.width = 1.5
-				gold_trim.default_color = Color("#FFD700")
-				mask_slot.add_child(gold_trim)
-
 				var neon_visor := Polygon2D.new()
-				neon_visor.polygon = PackedVector2Array([
-					Vector2(19.0, -5.0), Vector2(26.0, -4.0),
-					Vector2(25.0, 2.5), Vector2(19.0, 2.5)
-				])
+				neon_visor.polygon = _make_ellipse(4.2, 3.2, Vector2.ZERO)
 				neon_visor.color = Color("#FF1493")
 				var add_mat := CanvasItemMaterial.new()
 				add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -974,54 +1429,46 @@ class PlayerVisuals extends Node2D:
 			if level == 1:
 				var goggles := Polygon2D.new()
 				goggles.polygon = PackedVector2Array([
-					Vector2(-5.0, -40.0), Vector2(5.0, -40.0),
-					Vector2(5.0, -36.0), Vector2(-5.0, -36.0)
+					Vector2(-5.0, -2.0), Vector2(5.0, -2.0),
+					Vector2(5.0, 2.0), Vector2(-5.0, 2.0)
 				])
 				goggles.color = Color(0.55, 0.85, 0.95, 0.8)
 				mask_slot.add_child(goggles)
 
 				var rim := Line2D.new()
 				rim.points = PackedVector2Array([
-					Vector2(-5.0, -40.0), Vector2(5.0, -40.0),
-					Vector2(5.0, -36.0), Vector2(-5.0, -36.0), Vector2(-5.0, -40.0)
+					Vector2(-5.0, -2.0), Vector2(5.0, -2.0),
+					Vector2(5.0, 2.0), Vector2(-5.0, 2.0), Vector2(-5.0, -2.0)
 				])
 				rim.width = 1.0
 				rim.default_color = Color("#181D1F")
 				mask_slot.add_child(rim)
 			elif level == 2:
 				var frame := Polygon2D.new()
-				frame.polygon = _make_ellipse(5.5, 4.5, Vector2(0.0, -38.5))
+				frame.polygon = _make_ellipse(5.5, 4.5, Vector2.ZERO)
 				frame.color = Color("#D49B24")
 				mask_slot.add_child(frame)
 
 				var glass := Polygon2D.new()
-				glass.polygon = _make_ellipse(4.0, 3.0, Vector2(0.0, -38.5))
+				glass.polygon = _make_ellipse(4.0, 3.0, Vector2.ZERO)
 				glass.color = Color(0.1, 0.95, 0.95, 0.9)
 				mask_slot.add_child(glass)
 			else:
 				# Level 3+: High-tech neon magenta/gold abyssal visor
 				var frame := Polygon2D.new()
-				frame.polygon = PackedVector2Array([
-					Vector2(-7.0, -42.5), Vector2(7.0, -42.5),
-					Vector2(6.0, -34.5), Vector2(-6.0, -34.5)
-				])
+				frame.polygon = _make_ellipse(6.5, 5.0, Vector2.ZERO)
 				frame.color = Color("#181A20")
 				mask_slot.add_child(frame)
 
 				var trim := Line2D.new()
-				trim.points = PackedVector2Array([
-					Vector2(-7.0, -42.5), Vector2(7.0, -42.5),
-					Vector2(6.0, -34.5), Vector2(-6.0, -34.5), Vector2(-7.0, -42.5)
-				])
+				trim.points = _make_ellipse(6.5, 5.0, Vector2.ZERO)
 				trim.width = 1.2
 				trim.default_color = Color("#FFD700")
+				trim.closed = true
 				mask_slot.add_child(trim)
 
 				var neon_lens := Polygon2D.new()
-				neon_lens.polygon = PackedVector2Array([
-					Vector2(-5.0, -40.5), Vector2(5.0, -40.5),
-					Vector2(4.5, -36.5), Vector2(-4.5, -36.5)
-				])
+				neon_lens.polygon = _make_ellipse(4.5, 3.5, Vector2.ZERO)
 				neon_lens.color = Color("#FF1493")
 				var add_mat := CanvasItemMaterial.new()
 				add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -1034,20 +1481,24 @@ class PlayerVisuals extends Node2D:
 		if not is_swimming:
 			return
 
+		# Skip if using custom sprite and level <= 1 (base fins already visible on sprite!)
+		if has_custom_sprite and level <= 1:
+			return
+
 		var custom_tex_path: String = "res://assets/gear/fins_lv%d.png" % level
 		if ResourceLoader.exists(custom_tex_path):
 			var spr := _create_gear_sprite(custom_tex_path, Vector2(24.0, 18.0))
 			if spr != null:
-				spr.position = Vector2(-30.0, 3.0)
+				spr.position = Vector2.ZERO
 				fins_slot.add_child(spr)
 				return
 
 		if level == 1:
-			# Short black rubber flippers
+			# Short black rubber flippers (procedural fallback only)
 			var fin := Polygon2D.new()
 			fin.polygon = PackedVector2Array([
-				Vector2(-22.0, 0.0), Vector2(-36.0, -2.0),
-				Vector2(-37.0, 7.0), Vector2(-22.0, 5.0)
+				Vector2(-2.0, -3.0), Vector2(-16.0, -5.0),
+				Vector2(-17.0, 4.0), Vector2(-2.0, 2.0)
 			])
 			fin.color = Color("#1C2024")
 			fins_slot.add_child(fin)
@@ -1055,14 +1506,14 @@ class PlayerVisuals extends Node2D:
 			# Long cyan carbon-fiber blades
 			var blade := Polygon2D.new()
 			blade.polygon = PackedVector2Array([
-				Vector2(-22.0, -1.0), Vector2(-46.0, -3.0),
-				Vector2(-44.0, 9.0), Vector2(-22.0, 6.0)
+				Vector2(-2.0, -4.0), Vector2(-26.0, -6.0),
+				Vector2(-24.0, 6.0), Vector2(-2.0, 3.0)
 			])
 			blade.color = Color("#00C8D6")
 			fins_slot.add_child(blade)
 
 			var carbon_ridge := Line2D.new()
-			carbon_ridge.points = PackedVector2Array([Vector2(-23.0, 2.5), Vector2(-45.0, 3.0)])
+			carbon_ridge.points = PackedVector2Array([Vector2(-3.0, 0.0), Vector2(-25.0, 0.0)])
 			carbon_ridge.width = 1.5
 			carbon_ridge.default_color = Color("#163A42")
 			fins_slot.add_child(carbon_ridge)
@@ -1070,8 +1521,8 @@ class PlayerVisuals extends Node2D:
 			# Level 3+: Glowing hydro-jet thruster fins!
 			var thruster := Polygon2D.new()
 			thruster.polygon = PackedVector2Array([
-				Vector2(-22.0, -2.0), Vector2(-34.0, -3.0),
-				Vector2(-34.0, 8.0), Vector2(-22.0, 7.0)
+				Vector2(-2.0, -5.0), Vector2(-14.0, -6.0),
+				Vector2(-14.0, 5.0), Vector2(-2.0, 4.0)
 			])
 			thruster.color = Color("#262930")
 			fins_slot.add_child(thruster)
@@ -1079,8 +1530,8 @@ class PlayerVisuals extends Node2D:
 			# Jet exhaust plume / plasma wake
 			var jet := Polygon2D.new()
 			jet.polygon = PackedVector2Array([
-				Vector2(-34.0, 0.0), Vector2(-48.0, 2.5),
-				Vector2(-34.0, 5.0)
+				Vector2(-14.0, -3.0), Vector2(-28.0, 0.0),
+				Vector2(-14.0, 3.0)
 			])
 			jet.color = Color(0.0, 0.95, 1.0, 0.85)
 			var add_mat := CanvasItemMaterial.new()
@@ -1090,8 +1541,8 @@ class PlayerVisuals extends Node2D:
 
 			var core := Polygon2D.new()
 			core.polygon = PackedVector2Array([
-				Vector2(-34.0, 1.5), Vector2(-42.0, 2.5),
-				Vector2(-34.0, 3.5)
+				Vector2(-14.0, -1.5), Vector2(-22.0, 0.0),
+				Vector2(-14.0, 1.5)
 			])
 			core.color = Color(1.0, 1.0, 1.0, 0.9)
 			core.material = add_mat
@@ -1101,38 +1552,42 @@ class PlayerVisuals extends Node2D:
 	func _build_exo_visual(level: int) -> void:
 		_clear_slot(exo_slot)
 
+		# Skip if using custom sprite and level <= 1 (base harness already visible on sprite!)
+		if has_custom_sprite and level <= 1:
+			return
+
 		var custom_tex_path: String = "res://assets/gear/exo_lv%d.png" % level
 		if ResourceLoader.exists(custom_tex_path):
 			var spr := _create_gear_sprite(custom_tex_path, Vector2(30.0, 26.0))
 			if spr != null:
-				spr.position = Vector2(0.0, 0.0) if is_swimming else Vector2(0.0, -24.0)
+				spr.position = Vector2.ZERO
 				exo_slot.add_child(spr)
 				return
 
 		if is_swimming:
 			if level == 1:
-				# Simple leather strap & utility pouch
+				# Simple leather strap & utility pouch (procedural fallback only)
 				var strap := Line2D.new()
-				strap.points = PackedVector2Array([Vector2(-8.0, -7.0), Vector2(4.0, 7.0)])
+				strap.points = PackedVector2Array([Vector2(-7.0, -7.0), Vector2(5.0, 7.0)])
 				strap.width = 2.0
 				strap.default_color = Color("#4A2E1B")
 				exo_slot.add_child(strap)
 
 				var pouch := ColorRect.new()
 				pouch.color = Color("#3D2515")
-				pouch.position = Vector2(-4.0, 3.0)
+				pouch.position = Vector2(-3.0, 3.0)
 				pouch.size = Vector2(4.0, 4.0)
 				exo_slot.add_child(pouch)
 			elif level == 2:
 				# Yellow industrial steel exo-frame bars around shoulders/spine
 				var spine_bar := Line2D.new()
-				spine_bar.points = PackedVector2Array([Vector2(-12.0, -8.0), Vector2(8.0, -8.0)])
+				spine_bar.points = PackedVector2Array([Vector2(-11.0, -8.0), Vector2(9.0, -8.0)])
 				spine_bar.width = 2.5
 				spine_bar.default_color = Color("#FF8C00")
 				exo_slot.add_child(spine_bar)
 
 				var piston := Line2D.new()
-				piston.points = PackedVector2Array([Vector2(-8.0, -8.0), Vector2(-8.0, 4.0)])
+				piston.points = PackedVector2Array([Vector2(-7.0, -8.0), Vector2(-7.0, 4.0)])
 				piston.width = 2.0
 				piston.default_color = Color("#A0AAB2")
 				exo_slot.add_child(piston)
@@ -1140,27 +1595,27 @@ class PlayerVisuals extends Node2D:
 				# Level 3+: Heavy powered mech-harness with glowing status lights!
 				var chassis := Polygon2D.new()
 				chassis.polygon = PackedVector2Array([
-					Vector2(-12.0, -9.0), Vector2(10.0, -9.0),
-					Vector2(8.0, -5.0), Vector2(-12.0, -5.0)
+					Vector2(-11.0, -9.0), Vector2(11.0, -9.0),
+					Vector2(9.0, -5.0), Vector2(-11.0, -5.0)
 				])
 				chassis.color = Color("#263238")
 				exo_slot.add_child(chassis)
 
 				var hazard_stripe := Line2D.new()
-				hazard_stripe.points = PackedVector2Array([Vector2(-10.0, -7.0), Vector2(7.0, -7.0)])
+				hazard_stripe.points = PackedVector2Array([Vector2(-9.0, -7.0), Vector2(8.0, -7.0)])
 				hazard_stripe.width = 1.5
 				hazard_stripe.default_color = Color("#FFB300")
 				exo_slot.add_child(hazard_stripe)
 
 				var piston := Line2D.new()
-				piston.points = PackedVector2Array([Vector2(-7.0, -7.0), Vector2(-7.0, 5.0)])
+				piston.points = PackedVector2Array([Vector2(-6.0, -7.0), Vector2(-6.0, 5.0)])
 				piston.width = 2.5
 				piston.default_color = Color("#E0E6ED")
 				exo_slot.add_child(piston)
 
 				# Glowing status LED
 				var led := Polygon2D.new()
-				led.polygon = _make_ellipse(1.5, 1.5, Vector2(2.0, -7.0))
+				led.polygon = _make_ellipse(1.5, 1.5, Vector2(3.0, -7.0))
 				led.color = Color("#00E676")
 				var add_mat := CanvasItemMaterial.new()
 				add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -1170,15 +1625,15 @@ class PlayerVisuals extends Node2D:
 			# Upright (2.5D Top-Down) Exo-Rig
 			if level == 1:
 				var strap := Line2D.new()
-				strap.points = PackedVector2Array([Vector2(-7.0, -30.0), Vector2(6.0, -17.0)])
+				strap.points = PackedVector2Array([Vector2(-7.0, -6.0), Vector2(6.0, 7.0)])
 				strap.width = 2.0
 				strap.default_color = Color("#4A2E1B")
 				exo_slot.add_child(strap)
 
 				var buckle := Polygon2D.new()
 				buckle.polygon = PackedVector2Array([
-					Vector2(-1.5, -24.5), Vector2(1.5, -24.5),
-					Vector2(1.5, -22.5), Vector2(-1.5, -22.5)
+					Vector2(-1.5, -0.5), Vector2(1.5, -0.5),
+					Vector2(1.5, 1.5), Vector2(-1.5, 1.5)
 				])
 				buckle.color = Color("#C8961E")
 				exo_slot.add_child(buckle)
@@ -1186,24 +1641,24 @@ class PlayerVisuals extends Node2D:
 				# Industrial steel exo-frame bars over shoulders
 				var shoulder_l := ColorRect.new()
 				shoulder_l.color = Color("#FF8C00")
-				shoulder_l.position = Vector2(-11.0, -32.0)
+				shoulder_l.position = Vector2(-11.0, -8.0)
 				shoulder_l.size = Vector2(3.0, 5.0)
 				exo_slot.add_child(shoulder_l)
 
 				var shoulder_r := ColorRect.new()
 				shoulder_r.color = Color("#FF8C00")
-				shoulder_r.position = Vector2(8.0, -32.0)
+				shoulder_r.position = Vector2(8.0, -8.0)
 				shoulder_r.size = Vector2(3.0, 5.0)
 				exo_slot.add_child(shoulder_r)
 
 				var hip_strut := Line2D.new()
-				hip_strut.points = PackedVector2Array([Vector2(-9.0, -18.0), Vector2(-9.0, -8.0)])
+				hip_strut.points = PackedVector2Array([Vector2(-9.0, 6.0), Vector2(-9.0, 16.0)])
 				hip_strut.width = 2.0
 				hip_strut.default_color = Color("#A0AAB2")
 				exo_slot.add_child(hip_strut)
 
 				var hip_strut_r := Line2D.new()
-				hip_strut_r.points = PackedVector2Array([Vector2(9.0, -18.0), Vector2(9.0, -8.0)])
+				hip_strut_r.points = PackedVector2Array([Vector2(9.0, 6.0), Vector2(9.0, 16.0)])
 				hip_strut_r.width = 2.0
 				hip_strut_r.default_color = Color("#A0AAB2")
 				exo_slot.add_child(hip_strut_r)
@@ -1211,47 +1666,47 @@ class PlayerVisuals extends Node2D:
 				# Level 3+: Heavy powered mech-harness with glowing status lights!
 				var pauldron_l := Polygon2D.new()
 				pauldron_l.polygon = PackedVector2Array([
-					Vector2(-13.0, -33.0), Vector2(-7.0, -33.0),
-					Vector2(-6.0, -26.0), Vector2(-13.0, -26.0)
+					Vector2(-13.0, -9.0), Vector2(-7.0, -9.0),
+					Vector2(-6.0, -2.0), Vector2(-13.0, -2.0)
 				])
 				pauldron_l.color = Color("#263238")
 				exo_slot.add_child(pauldron_l)
 
 				var pauldron_r := Polygon2D.new()
 				pauldron_r.polygon = PackedVector2Array([
-					Vector2(7.0, -33.0), Vector2(13.0, -33.0),
-					Vector2(13.0, -26.0), Vector2(6.0, -26.0)
+					Vector2(7.0, -9.0), Vector2(13.0, -9.0),
+					Vector2(13.0, -2.0), Vector2(6.0, -2.0)
 				])
 				pauldron_r.color = Color("#263238")
 				exo_slot.add_child(pauldron_r)
 
 				var stripe_l := Line2D.new()
-				stripe_l.points = PackedVector2Array([Vector2(-12.0, -29.0), Vector2(-7.0, -29.0)])
+				stripe_l.points = PackedVector2Array([Vector2(-12.0, -5.0), Vector2(-7.0, -5.0)])
 				stripe_l.width = 1.5
 				stripe_l.default_color = Color("#FFB300")
 				exo_slot.add_child(stripe_l)
 
 				var stripe_r := Line2D.new()
-				stripe_r.points = PackedVector2Array([Vector2(7.0, -29.0), Vector2(12.0, -29.0)])
+				stripe_r.points = PackedVector2Array([Vector2(7.0, -5.0), Vector2(12.0, -5.0)])
 				stripe_r.width = 1.5
 				stripe_r.default_color = Color("#FFB300")
 				exo_slot.add_child(stripe_r)
 
 				var hip_l := Line2D.new()
-				hip_l.points = PackedVector2Array([Vector2(-10.0, -18.0), Vector2(-10.0, -7.0)])
+				hip_l.points = PackedVector2Array([Vector2(-10.0, 6.0), Vector2(-10.0, 17.0)])
 				hip_l.width = 2.5
 				hip_l.default_color = Color("#E0E6ED")
 				exo_slot.add_child(hip_l)
 
 				var hip_r := Line2D.new()
-				hip_r.points = PackedVector2Array([Vector2(10.0, -18.0), Vector2(10.0, -7.0)])
+				hip_r.points = PackedVector2Array([Vector2(10.0, 6.0), Vector2(10.0, 17.0)])
 				hip_r.width = 2.5
 				hip_r.default_color = Color("#E0E6ED")
 				exo_slot.add_child(hip_r)
 
 				# Status LEDs on shoulders
 				var led_l := Polygon2D.new()
-				led_l.polygon = _make_ellipse(1.5, 1.5, Vector2(-10.0, -31.5))
+				led_l.polygon = _make_ellipse(1.5, 1.5, Vector2(-10.0, -7.5))
 				led_l.color = Color("#00E676")
 				var add_mat := CanvasItemMaterial.new()
 				add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -1259,7 +1714,7 @@ class PlayerVisuals extends Node2D:
 				exo_slot.add_child(led_l)
 
 				var led_r := Polygon2D.new()
-				led_r.polygon = _make_ellipse(1.5, 1.5, Vector2(10.0, -31.5))
+				led_r.polygon = _make_ellipse(1.5, 1.5, Vector2(10.0, -7.5))
 				led_r.color = Color("#00E5FF")
 				led_r.material = add_mat
 				exo_slot.add_child(led_r)
@@ -1277,14 +1732,292 @@ class PlayerVisuals extends Node2D:
 	func _clear_slot(slot: Node2D) -> void:
 		if slot != null:
 			for c in slot.get_children():
+				slot.remove_child(c)
 				c.queue_free()
 
-	func _make_ellipse(rx: float, ry: float, offset: Vector2 = Vector2.ZERO, segments: int = 12) -> PackedVector2Array:
+	static func _make_ellipse(rx: float, ry: float, offset: Vector2 = Vector2.ZERO, segments: int = 12) -> PackedVector2Array:
 		var pts := PackedVector2Array()
 		for i in range(segments):
 			var angle: float = (float(i) / float(segments)) * TAU
 			pts.append(offset + Vector2(cos(angle) * rx, sin(angle) * ry))
 		return pts
+
+
+## Helper generating an ellipse / circle polygon vector array
+static func _make_ellipse(rx: float, ry: float, offset: Vector2 = Vector2.ZERO, segments: int = 12) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in range(segments):
+		var angle: float = (float(i) / float(segments)) * TAU
+		pts.append(offset + Vector2(cos(angle) * rx, sin(angle) * ry))
+	return pts
+
+
+class PlayerVisuals extends VisualRig:
+	pass
+
+
+# ==============================================================================
+# Four-State Relic Visual System (Direction 4)
+# ==============================================================================
+
+class RelicVisualNode extends Node2D:
+	var visual_state: String = ""
+	var relic_color: Color = Color.CYAN
+	var hover_container: Node2D = null
+	var halo_poly: Polygon2D = null
+	var shimmer_spark: Polygon2D = null
+	var _anim_time: float = 0.0
+
+	func _ready() -> void:
+		_anim_time = randf() * TAU
+
+	func _process(delta: float) -> void:
+		_anim_time += delta
+		if visual_state == "underwater_buried":
+			if halo_poly != null:
+				var pulse: float = 1.0 + sin(_anim_time * 3.2) * 0.16
+				halo_poly.scale = Vector2(pulse, pulse)
+		elif visual_state == "pedestal_25d":
+			if hover_container != null:
+				hover_container.position.y = -18.0 + sin(_anim_time * 3.0) * 3.0
+			if shimmer_spark != null:
+				shimmer_spark.rotation += delta * 1.8
+				shimmer_spark.scale = Vector2.ONE * (0.8 + sin(_anim_time * 4.0) * 0.25)
+
+
+## Builds a 4-state visual node for a relic:
+## "underwater_buried", "encrusted_icon", "clean_icon", "pedestal_25d"
+func build_relic_visual(relic_id: String, state: String) -> Node2D:
+	var root := RelicVisualNode.new()
+	root.name = "RelicVisual_%s" % state
+	root.visual_state = state
+
+	var db: Dictionary = RELIC_DB
+	var relic_data: Dictionary = db.get(relic_id, {})
+	var r_color := Color.from_string(str(relic_data.get("color_hex", "#00ffff")), Color.CYAN)
+	if relic_data.has("color") and relic_data["color"] is Color:
+		r_color = relic_data["color"]
+	root.relic_color = r_color
+
+	var icon_p: String = str(relic_data.get("icon_path", "res://assets/relics/%s.png" % relic_id))
+
+	if state == "underwater_buried":
+		root.rotation = deg_to_rad(14.0)
+
+		# 1. Pulsing underwater glint halo
+		var halo := Polygon2D.new()
+		halo.name = "BuriedHalo"
+		halo.polygon = _make_ellipse(24.0, 14.0)
+		halo.color = Color(r_color.r, r_color.g, r_color.b, 0.26)
+		root.add_child(halo)
+		root.halo_poly = halo
+
+		# 2. Base relic (custom buried PNG -> clean PNG -> procedural crystal)
+		var custom_buried: String = "res://assets/relics/%s_buried.png" % relic_id
+		var loaded_spr: Sprite2D = null
+		if ResourceLoader.exists(custom_buried):
+			loaded_spr = load_smart_sprite(root, custom_buried, Vector2(36.0, 36.0))
+		elif ResourceLoader.exists(icon_p):
+			loaded_spr = load_smart_sprite(root, icon_p, Vector2(32.0, 32.0))
+
+		if loaded_spr == null:
+			var crystal := Polygon2D.new()
+			crystal.name = "CrystalCore"
+			crystal.polygon = PackedVector2Array([
+				Vector2(0.0, -14.0), Vector2(11.0, -3.0),
+				Vector2(8.0, 12.0), Vector2(-8.0, 12.0),
+				Vector2(-11.0, -3.0)
+			])
+			crystal.color = r_color
+			root.add_child(crystal)
+
+			var hi := Polygon2D.new()
+			hi.name = "CrystalHighlight"
+			hi.polygon = PackedVector2Array([
+				Vector2(0.0, -9.0), Vector2(6.0, -2.0),
+				Vector2(4.0, 6.0), Vector2(-4.0, 6.0),
+				Vector2(-6.0, -2.0)
+			])
+			hi.color = Color.WHITE.lerp(r_color, 0.4)
+			root.add_child(hi)
+
+		# 3. Seabed mud silt & barnacle clumps covering bottom half
+		var mud := Polygon2D.new()
+		mud.name = "SeabedMud"
+		mud.polygon = PackedVector2Array([
+			Vector2(-14.0, 1.0), Vector2(-4.0, -2.0), Vector2(4.0, 2.0),
+			Vector2(14.0, 0.0), Vector2(16.0, 15.0), Vector2(-16.0, 15.0)
+		])
+		mud.color = Color("#261D16")
+		root.add_child(mud)
+
+		var silt := Line2D.new()
+		silt.points = PackedVector2Array([
+			Vector2(-14.0, 1.0), Vector2(-4.0, -2.0), Vector2(4.0, 2.0), Vector2(14.0, 0.0)
+		])
+		silt.width = 1.8
+		silt.default_color = Color("#3D3025")
+		root.add_child(silt)
+
+		for b_pos in [Vector2(-6.0, 5.0), Vector2(2.0, 7.0), Vector2(9.0, 4.0)]:
+			var b_shell := Polygon2D.new()
+			b_shell.polygon = _make_ellipse(3.0, 2.5, b_pos)
+			b_shell.color = Color("#6E6252")
+			root.add_child(b_shell)
+			var b_pit := Polygon2D.new()
+			b_pit.polygon = _make_ellipse(1.2, 1.0, b_pos)
+			b_pit.color = Color("#1F1813")
+			root.add_child(b_pit)
+
+	elif state == "encrusted_icon":
+		var encrusted_p: String = "res://assets/relics/%s_encrusted.png" % relic_id
+		var loaded_spr: Sprite2D = null
+		if ResourceLoader.exists(encrusted_p):
+			loaded_spr = load_smart_sprite(root, encrusted_p, Vector2(32.0, 32.0))
+
+		if loaded_spr == null:
+			var sil := Polygon2D.new()
+			sil.polygon = PackedVector2Array([
+				Vector2(-13.0, -11.0), Vector2(2.0, -14.0), Vector2(14.0, -8.0),
+				Vector2(15.0, 8.0), Vector2(5.0, 14.0), Vector2(-11.0, 12.0),
+				Vector2(-15.0, 2.0)
+			])
+			sil.color = Color("#2B221B")
+			root.add_child(sil)
+
+			var rock1 := Polygon2D.new()
+			rock1.polygon = PackedVector2Array([
+				Vector2(-11.0, -9.0), Vector2(1.0, -12.0), Vector2(7.0, -4.0),
+				Vector2(-2.0, 2.0), Vector2(-12.0, -2.0)
+			])
+			rock1.color = Color("#4E4236")
+			root.add_child(rock1)
+
+			var rock2 := Polygon2D.new()
+			rock2.polygon = PackedVector2Array([
+				Vector2(0.0, -4.0), Vector2(13.0, -6.0), Vector2(13.0, 7.0),
+				Vector2(3.0, 12.0), Vector2(-3.0, 3.0)
+			])
+			rock2.color = Color("#5C5042")
+			root.add_child(rock2)
+
+			var rock3 := Polygon2D.new()
+			rock3.polygon = PackedVector2Array([
+				Vector2(-12.0, 0.0), Vector2(-1.0, 4.0), Vector2(4.0, 12.0),
+				Vector2(-9.0, 11.0), Vector2(-14.0, 4.0)
+			])
+			rock3.color = Color("#382F26")
+			root.add_child(rock3)
+
+			var fissure := Line2D.new()
+			fissure.points = PackedVector2Array([
+				Vector2(-6.0, -5.0), Vector2(1.0, -1.0), Vector2(5.0, 6.0)
+			])
+			fissure.width = 1.2
+			fissure.default_color = Color("#8D7E6C")
+			root.add_child(fissure)
+
+			var glint := Polygon2D.new()
+			glint.polygon = _make_ellipse(1.5, 1.5, Vector2(1.0, -1.0))
+			glint.color = Color(r_color.r, r_color.g, r_color.b, 0.65)
+			root.add_child(glint)
+
+	elif state == "clean_icon":
+		var loaded_spr: Sprite2D = null
+		if ResourceLoader.exists(icon_p):
+			loaded_spr = load_smart_sprite(root, icon_p, Vector2(32.0, 32.0))
+
+		if loaded_spr == null:
+			var rim := Polygon2D.new()
+			rim.polygon = PackedVector2Array([
+				Vector2(0.0, -15.0), Vector2(12.0, -4.0),
+				Vector2(9.0, 13.0), Vector2(-9.0, 13.0),
+				Vector2(-12.0, -4.0)
+			])
+			rim.color = Color("#151D24")
+			root.add_child(rim)
+
+			var core := Polygon2D.new()
+			core.polygon = PackedVector2Array([
+				Vector2(0.0, -13.5), Vector2(10.5, -3.5),
+				Vector2(7.5, 11.5), Vector2(-7.5, 11.5),
+				Vector2(-10.5, -3.5)
+			])
+			core.color = r_color
+			root.add_child(core)
+
+			var spec := Polygon2D.new()
+			spec.polygon = PackedVector2Array([
+				Vector2(0.0, -9.0), Vector2(5.5, -2.5),
+				Vector2(3.5, 5.0), Vector2(-3.5, 5.0),
+				Vector2(-5.5, -2.5)
+			])
+			spec.color = Color.WHITE.lerp(r_color, 0.45)
+			root.add_child(spec)
+
+			var dot := Polygon2D.new()
+			dot.polygon = _make_ellipse(1.5, 1.5, Vector2(0.0, -1.0))
+			dot.color = Color.WHITE
+			root.add_child(dot)
+
+	elif state == "pedestal_25d":
+		var shadow := Polygon2D.new()
+		shadow.name = "PedestalShadow"
+		shadow.polygon = _make_ellipse(18.0, 8.0, Vector2(0.0, 8.0))
+		shadow.color = Color(0.0, 0.0, 0.0, 0.45)
+		root.add_child(shadow)
+
+		var hover := Node2D.new()
+		hover.name = "HoverContainer"
+		hover.position = Vector2(0.0, -18.0)
+		root.add_child(hover)
+		root.hover_container = hover
+
+		var aura := Polygon2D.new()
+		aura.name = "SpotlightAura"
+		aura.polygon = _make_ellipse(20.0, 13.0)
+		aura.color = Color(r_color.r, r_color.g, r_color.b, 0.32)
+		hover.add_child(aura)
+
+		var loaded_spr: Sprite2D = null
+		if ResourceLoader.exists(icon_p):
+			loaded_spr = load_smart_sprite(hover, icon_p, Vector2(32.0, 32.0))
+
+		if loaded_spr == null:
+			var crystal := Polygon2D.new()
+			crystal.polygon = PackedVector2Array([
+				Vector2(0.0, -13.0), Vector2(10.0, -3.0),
+				Vector2(7.0, 10.0), Vector2(-7.0, 10.0),
+				Vector2(-10.0, -3.0)
+			])
+			crystal.color = r_color
+			hover.add_child(crystal)
+
+			var hi := Polygon2D.new()
+			hi.polygon = PackedVector2Array([
+				Vector2(0.0, -8.0), Vector2(5.0, -2.0),
+				Vector2(3.0, 5.0), Vector2(-3.0, 5.0),
+				Vector2(-5.0, -2.0)
+			])
+			hi.color = Color.WHITE.lerp(r_color, 0.4)
+			hover.add_child(hi)
+
+		var spark := Polygon2D.new()
+		spark.name = "ShimmerSpark"
+		spark.polygon = PackedVector2Array([
+			Vector2(0.0, -4.5), Vector2(1.5, -1.0), Vector2(4.5, 0.0),
+			Vector2(1.5, 1.0), Vector2(0.0, 4.5), Vector2(-1.5, 1.0),
+			Vector2(-4.5, 0.0), Vector2(-1.5, -1.0)
+		])
+		spark.color = Color.WHITE
+		spark.position = Vector2(6.0, -8.0)
+		var add_mat := CanvasItemMaterial.new()
+		add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		spark.material = add_mat
+		hover.add_child(spark)
+		root.shimmer_spark = spark
+
+	return root
 
 
 # ==============================================================================
@@ -1495,6 +2228,7 @@ func unlock_room(room_id: String, gold_cost: int, bp_cost: int) -> bool:
 		unlocked_rooms[room_id] = true
 		save_game()
 		inventory_changed.emit()
+		play_sfx("cash")
 		return true
 	return false
 
@@ -1593,6 +2327,7 @@ func upgrade_oxygen() -> bool:
 		gold -= cost
 		oxygen_level += 1
 		max_oxygen = 100.0 + float(oxygen_level - 1) * 25.0
+		play_sfx("cash")
 		save_game()
 		inventory_changed.emit()
 		return true
@@ -1604,6 +2339,7 @@ func upgrade_fins() -> bool:
 		gold -= cost
 		fins_level += 1
 		swim_speed = 200.0 + float(fins_level - 1) * 35.0
+		play_sfx("cash")
 		save_game()
 		inventory_changed.emit()
 		return true
@@ -1615,6 +2351,7 @@ func upgrade_exo() -> bool:
 		gold -= cost
 		exo_level += 1
 		max_weight = 15.0 + float(exo_level - 1) * 7.5
+		play_sfx("cash")
 		save_game()
 		inventory_changed.emit()
 		return true

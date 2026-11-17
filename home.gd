@@ -38,6 +38,7 @@ var cleaning_reveal_panel: PanelContainer
 var cleaning_reveal_title: Label
 var cleaning_reveal_val: Label
 var cleaning_reveal_desc: Label
+var cleaning_preview_control: Control
 
 var codex_modal: Control
 var synth_modal: Control
@@ -56,6 +57,11 @@ var sleep_calculated_bonus: int = 0
 # Cleaning mini-game state
 var active_cleaning_inventory_index: int = -1
 var active_crust_integrity: float = 100.0
+var barnacle_clumps: Array[Control] = []
+var barnacle_total_count: int = 7
+var barnacle_remaining_count: int = 7
+var _chamber_relic_node: Node2D = null
+var _chamber_debris_node: Node2D = null
 
 const WALK_SPEED: float = 210.0
 const EXIT_DOOR_POS: Vector2 = Vector2(576.0, 580.0)
@@ -710,11 +716,7 @@ func _handle_player_movement() -> void:
 	player.position.x = clampf(player.position.x, 110.0, 1040.0)
 	player.position.y = clampf(player.position.y, 70.0, 580.0)
 
-	# Flip character visuals / sprite according to walking direction
-	var vis = player.get_node_or_null("CharacterVisuals")
-	if vis != null and absf(player.velocity.x) > 5.0:
-		vis.scale.x = -1.0 if player.velocity.x < 0.0 else 1.0
-
+	# Legacy sprite fallback flipping if not using VisualRig
 	var sprite: Sprite2D = player.get_node_or_null("Sprite2D") as Sprite2D
 	if sprite != null and absf(player.velocity.x) > 5.0:
 		sprite.flip_h = player.velocity.x < 0.0
@@ -1097,6 +1099,18 @@ func _setup_cleaning_modal() -> void:
 	cs_vbox.add_theme_constant_override("separation", 10)
 	cs_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
 
+	cleaning_preview_control = Control.new()
+	cleaning_preview_control.custom_minimum_size = Vector2(280.0, 150.0)
+	cleaning_preview_control.clip_contents = true
+	cs_vbox.add_child(cleaning_preview_control)
+
+	var hint_lbl := Label.new()
+	hint_lbl.text = "Click or drag mouse across barnacles to chip them off!"
+	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_lbl.add_theme_font_size_override("font_size", 11)
+	hint_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 1.0, 0.8))
+	cs_vbox.add_child(hint_lbl)
+
 	cleaning_crust_label = Label.new()
 	cleaning_crust_label.text = "Barnacle & Rust Crust: 100%"
 	cleaning_crust_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1227,8 +1241,8 @@ func _refresh_cleaning_list() -> void:
 	# Select first encrusted item by default if none active
 	if active_cleaning_inventory_index == -1 or not encrusted_indices.has(active_cleaning_inventory_index):
 		active_cleaning_inventory_index = encrusted_indices[0]
-		active_crust_integrity = 100.0
 		cleaning_reveal_panel.visible = false
+		_setup_barnacle_chamber()
 
 	for idx in encrusted_indices:
 		var item: Dictionary = items_list[idx]
@@ -1244,58 +1258,233 @@ func _refresh_cleaning_list() -> void:
 
 		btn.pressed.connect(func():
 			active_cleaning_inventory_index = idx
-			active_crust_integrity = 100.0
 			cleaning_reveal_panel.visible = false
-			_update_cleaning_progress()
+			_setup_barnacle_chamber()
 			_refresh_cleaning_list()
 		)
 		cleaning_items_vbox.add_child(btn)
 
-	_update_cleaning_progress()
+	_update_cleaning_progress_display()
 
 
-func _update_cleaning_progress() -> void:
+## Prepares the interactive scraping chamber: displays clean relic underneath and 7 randomized Barnacle Clumps
+func _setup_barnacle_chamber() -> void:
+	if cleaning_preview_control == null:
+		return
+
+	for c in cleaning_preview_control.get_children():
+		c.queue_free()
+
+	barnacle_clumps.clear()
+
+	var bp = _get_backpack()
+	if bp == null or active_cleaning_inventory_index < 0 or active_cleaning_inventory_index >= bp.items.size():
+		return
+
+	var item: Dictionary = bp.items[active_cleaning_inventory_index]
+	var rid: String = str(item.get("id", ""))
+
+	# 1. Inspection Chamber Background Panel
+	var bg_panel := Panel.new()
+	bg_panel.custom_minimum_size = Vector2(280.0, 150.0)
+	var bg_style := StyleBoxFlat.new()
+	bg_style.bg_color = Color(0.02, 0.06, 0.12, 0.96)
+	bg_style.border_width_left = 2
+	bg_style.border_width_right = 2
+	bg_style.border_width_top = 2
+	bg_style.border_width_bottom = 2
+	bg_style.border_color = Color(0.15, 0.5, 0.65, 0.75)
+	bg_style.set_corner_radius_all(6)
+	bg_panel.add_theme_stylebox_override("panel", bg_style)
+	cleaning_preview_control.add_child(bg_panel)
+
+	# 2. Relic Anchor at Center (140, 75)
+	var relic_anchor := Node2D.new()
+	relic_anchor.name = "RelicAnchor"
+	relic_anchor.position = Vector2(140.0, 75.0)
+	cleaning_preview_control.add_child(relic_anchor)
+	_chamber_relic_node = relic_anchor
+
+	if bp.has_method("build_relic_visual"):
+		var r_vis: Node2D = bp.build_relic_visual(rid, "clean_icon")
+		if r_vis != null:
+			r_vis.scale = Vector2(1.5, 1.5)
+			relic_anchor.add_child(r_vis)
+
+	# 3. Rock Debris Layer
+	var debris_node := Node2D.new()
+	debris_node.name = "DebrisLayer"
+	debris_node.position = Vector2(140.0, 75.0)
+	cleaning_preview_control.add_child(debris_node)
+	_chamber_debris_node = debris_node
+
+	# 4. Spawn 7 Randomized Barnacle Clumps covering the relic
+	barnacle_total_count = 7
+	barnacle_remaining_count = 7
+	active_crust_integrity = 100.0
+
+	var offsets = [
+		Vector2(0.0, 0.0),
+		Vector2(-26.0, -18.0),
+		Vector2(24.0, -16.0),
+		Vector2(-28.0, 14.0),
+		Vector2(26.0, 16.0),
+		Vector2(-4.0, -28.0),
+		Vector2(6.0, 26.0)
+	]
+
+	for i in range(barnacle_total_count):
+		var clump := Control.new()
+		clump.name = "BarnacleClump_%d" % i
+		clump.custom_minimum_size = Vector2(42.0, 38.0)
+		clump.mouse_default_cursor_shape = Control.CURSOR_CROSS
+		clump.position = Vector2(140.0, 75.0) + offsets[i] - Vector2(21.0, 19.0)
+
+		# Rocky jagged polygon
+		var poly := Polygon2D.new()
+		poly.position = Vector2(21.0, 19.0)
+		var rock_pts := PackedVector2Array()
+		var n_verts: int = 8
+		var base_rad: float = 18.0 + randf_range(-2.0, 2.0)
+		for v in range(n_verts):
+			var a: float = (float(v) / float(n_verts)) * TAU
+			var r: float = base_rad + randf_range(-4.0, 4.0)
+			rock_pts.append(Vector2(cos(a) * r, sin(a) * (r * 0.85)))
+		poly.polygon = rock_pts
+		var rock_colors = [Color("#3D3228"), Color("#4E3F33"), Color("#5A4A3C"), Color("#352A21")]
+		poly.color = rock_colors[i % rock_colors.size()]
+		clump.add_child(poly)
+
+		# Dark inner crater / suction pore
+		var crater := Polygon2D.new()
+		crater.position = Vector2(21.0, 19.0)
+		var c_pts := PackedVector2Array()
+		for v in range(6):
+			var a: float = (float(v) / 6.0) * TAU
+			c_pts.append(Vector2(cos(a) * 5.0, sin(a) * 4.0))
+		crater.polygon = c_pts
+		crater.color = Color("#17120E")
+		clump.add_child(crater)
+
+		# Click or drag scraping
+		clump.gui_input.connect(func(event: InputEvent):
+			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+				_chip_barnacle_clump(clump)
+		)
+		clump.mouse_entered.connect(func():
+			if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+				_chip_barnacle_clump(clump)
+		)
+
+		cleaning_preview_control.add_child(clump)
+		barnacle_clumps.append(clump)
+
+	_update_cleaning_progress_display()
+
+
+## Chips off an individual barnacle clump with particle burst, screen shake, and laser audio
+func _chip_barnacle_clump(clump: Control) -> void:
+	if not barnacle_clumps.has(clump):
+		return
+	barnacle_clumps.erase(clump)
+	barnacle_remaining_count = barnacle_clumps.size()
+
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("play_sfx"):
+		bp.play_sfx("laser_clean")
+
+	# Spawn rock debris fragments
+	if _chamber_debris_node != null and is_instance_valid(_chamber_debris_node):
+		var clump_rel_pos = clump.position + Vector2(21.0, 19.0) - Vector2(140.0, 75.0)
+		for f in range(5):
+			var frag := Polygon2D.new()
+			var frag_pts := PackedVector2Array([
+				Vector2(-3.0, -3.0), Vector2(3.0, -2.0),
+				Vector2(2.0, 4.0), Vector2(-3.0, 2.0)
+			])
+			frag.polygon = frag_pts
+			frag.color = Color("#6E5D4E")
+			frag.position = clump_rel_pos
+			_chamber_debris_node.add_child(frag)
+
+			var dir := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)).normalized()
+			var dist: float = randf_range(25.0, 60.0)
+			var ft := frag.create_tween().set_parallel(true)
+			ft.tween_property(frag, "position", clump_rel_pos + dir * dist, 0.3).set_ease(Tween.EASE_OUT)
+			ft.tween_property(frag, "rotation", randf_range(-3.0, 3.0), 0.3)
+			ft.tween_property(frag, "modulate:a", 0.0, 0.3)
+			ft.chain().tween_callback(frag.queue_free)
+
+	# Inspection chamber shake
+	if cleaning_preview_control != null:
+		var orig_x = cleaning_preview_control.position.x
+		var shake := cleaning_preview_control.create_tween()
+		shake.tween_property(cleaning_preview_control, "position:x", orig_x + randf_range(-4.0, 4.0), 0.03)
+		shake.tween_property(cleaning_preview_control, "position:x", orig_x, 0.03)
+
+	# Clump destruction tween
+	var ct := clump.create_tween().set_parallel(true)
+	ct.tween_property(clump, "scale", Vector2(1.3, 1.3), 0.12).set_trans(Tween.TRANS_BACK)
+	ct.tween_property(clump, "modulate:a", 0.0, 0.12)
+	ct.chain().tween_callback(clump.queue_free)
+
+	_update_cleaning_progress_display()
+
+	# If all cleared: reveal and identify relic!
+	if barnacle_remaining_count <= 0:
+		_on_relic_fully_cleaned()
+
+
+func _update_cleaning_progress_display() -> void:
+	if barnacle_total_count > 0:
+		active_crust_integrity = (float(barnacle_remaining_count) / float(barnacle_total_count)) * 100.0
+	else:
+		active_crust_integrity = 0.0
+
 	if cleaning_crust_bar != null:
 		cleaning_crust_bar.value = active_crust_integrity
 	if cleaning_crust_label != null:
-		cleaning_crust_label.text = "Barnacle & Rust Crust: %d%%" % int(active_crust_integrity)
+		if barnacle_remaining_count > 0:
+			cleaning_crust_label.text = "Barnacle & Rust Crust: %d%% (%d clumps remaining)" % [int(active_crust_integrity), barnacle_remaining_count]
+		else:
+			cleaning_crust_label.text = "Barnacle & Rust Crust: 0% (Fully Restored!)"
 	if cleaning_pulse_btn != null:
-		cleaning_pulse_btn.disabled = active_crust_integrity <= 0.0
+		cleaning_pulse_btn.disabled = barnacle_remaining_count <= 0
 
 
+func _on_relic_fully_cleaned() -> void:
+	var bp = _get_backpack()
+	if bp == null or active_cleaning_inventory_index < 0:
+		return
+
+	# Celebratory scale bounce on clean relic
+	if _chamber_relic_node != null and is_instance_valid(_chamber_relic_node):
+		var rt := _chamber_relic_node.create_tween()
+		rt.tween_property(_chamber_relic_node, "scale", Vector2(1.7, 1.7), 0.2).set_trans(Tween.TRANS_BACK)
+		rt.tween_property(_chamber_relic_node, "scale", Vector2(1.5, 1.5), 0.2)
+
+	if bp.has_method("play_sfx"):
+		bp.play_sfx("pickup")
+
+	var revealed: Dictionary = bp.clean_item_at(active_cleaning_inventory_index)
+
+	cleaning_reveal_panel.visible = true
+	cleaning_reveal_title.text = "✨ RELIC IDENTIFIED: %s" % revealed.get("name", "Human Relic")
+	cleaning_reveal_val.text = "Salvage Value: $%d Gold  •  Weight: %.1f kg  •  Rarity: %s" % [
+		int(revealed.get("value", 0)), float(revealed.get("weight", 0.0)), str(revealed.get("rarity", "Common"))
+	]
+	cleaning_reveal_desc.text = "\"%s\"" % str(revealed.get("alien_desc", ""))
+
+	_refresh_cleaning_list()
+	_update_prompts_and_hud()
+
+
+## Pulses the cleaning laser arm (chips 1 barnacle clump if any remain)
 func _pulse_cleaning_laser() -> void:
 	if active_cleaning_inventory_index < 0:
 		return
-
-	if active_crust_integrity <= 0.0:
-		return
-
-	# Chip away 25% crust per pulse
-	active_crust_integrity = maxf(active_crust_integrity - 25.0, 0.0)
-
-	# Pulse scale animation on button
-	var tween := create_tween()
-	tween.tween_property(cleaning_pulse_btn, "scale", Vector2(1.05, 1.05), 0.06)
-	tween.tween_property(cleaning_pulse_btn, "scale", Vector2.ONE, 0.06)
-
-	_update_cleaning_progress()
-
-	# When completely stripped, reveal relic!
-	if active_crust_integrity <= 0.0:
-		var bp = _get_backpack()
-		if bp != null:
-			var revealed: Dictionary = bp.clean_item_at(active_cleaning_inventory_index)
-
-			cleaning_reveal_panel.visible = true
-			cleaning_reveal_title.text = "✨ RELIC IDENTIFIED: %s" % revealed.get("name", "Human Relic")
-			cleaning_reveal_val.text = "Salvage Value: $%d Gold  •  Weight: %.1f kg" % [
-				int(revealed.get("value", 0)), float(revealed.get("weight", 0.0))
-			]
-			cleaning_reveal_desc.text = "\"%s\"" % str(revealed.get("alien_desc", ""))
-
-			# Refresh list and top HUD
-			_refresh_cleaning_list()
-			_update_prompts_and_hud()
+	if not barnacle_clumps.is_empty():
+		_chip_barnacle_clump(barnacle_clumps[0])
 
 
 # ==============================================================================
@@ -1474,6 +1663,8 @@ func _setup_synth_modal() -> void:
 		if bp != null and bp.cleaned_crust_units > 0:
 			bp.cleaned_crust_units -= 1
 			bp.gold += 50
+			if bp.has_method("play_sfx"):
+				bp.play_sfx("cash")
 			synth_feedback_label.text = "✓ Synthesized +$50 Gold from barnacle slag!"
 			synth_feedback_label.add_theme_color_override("font_color", Color(0.35, 1.0, 0.55))
 			_refresh_synth_ui()
@@ -1667,6 +1858,8 @@ func _on_start_next_day_pressed() -> void:
 		bp.current_day += 1
 		bp.gold += sleep_calculated_bonus
 		bp.daily_museum_earnings = sleep_calculated_bonus
+		if sleep_calculated_bonus > 0 and bp.has_method("play_sfx"):
+			bp.play_sfx("cash")
 		if bp.has_method("generate_daily_vip_quest"):
 			bp.generate_daily_vip_quest()
 		bp.save_game()

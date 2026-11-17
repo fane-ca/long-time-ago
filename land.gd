@@ -1099,11 +1099,7 @@ func _handle_player_movement(_delta: float) -> void:
 	player.position.x = clampf(player.position.x, 80.0, 1100.0)
 	player.position.y = clampf(player.position.y, 80.0, 600.0)
 
-	# Flip character visuals / sprite according to walking direction
-	var vis = player.get_node_or_null("CharacterVisuals")
-	if vis != null and absf(player.velocity.x) > 5.0:
-		vis.scale.x = -1.0 if player.velocity.x < 0.0 else 1.0
-
+	# Legacy sprite fallback flipping if not using VisualRig
 	var sprite: Sprite2D = player.get_node_or_null("Sprite2D") as Sprite2D
 	if sprite != null and absf(player.velocity.x) > 5.0:
 		sprite.flip_h = player.velocity.x < 0.0
@@ -2005,6 +2001,8 @@ func _on_vip_deliver_pressed() -> void:
 
 	var reward: int = int(bp.active_vip_quest.get("reward_gold", 0))
 	if bp.fulfill_vip_quest():
+		if bp.has_method("play_sfx"):
+			bp.play_sfx("cash")
 		_spawn_floating_cash_text(player.position + Vector2(0.0, -35.0), "+$%d VIP Bounty!" % reward)
 		_open_vip_quest_modal()
 		_update_prompts_and_hud()

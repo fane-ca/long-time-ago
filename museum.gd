@@ -311,40 +311,47 @@ func _refresh_pedestal_display(index: int) -> void:
 		var relic_color: Color = relic_data.get("color", Color.CYAN)
 		var relic_name: String = str(relic_data.get("name", "Unknown Relic"))
 
-		# Glowing aura
-		var glow := Polygon2D.new()
-		glow.polygon = _make_ellipse(18.0, 10.0)
-		glow.color = Color(relic_color.r, relic_color.g, relic_color.b, 0.35)
-		relic_container.add_child(glow)
+		# 1. Unified 4-State Relic Visual System ("pedestal_25d")
+		var relic_vis: Node2D = null
+		if bp != null and bp.has_method("build_relic_visual"):
+			relic_vis = bp.build_relic_visual(relic_id, "pedestal_25d")
+		if relic_vis != null:
+			relic_container.add_child(relic_vis)
+		else:
+			# Glowing aura
+			var glow := Polygon2D.new()
+			glow.polygon = _make_ellipse(18.0, 10.0)
+			glow.color = Color(relic_color.r, relic_color.g, relic_color.b, 0.35)
+			relic_container.add_child(glow)
 
-		# Faceted Relic Crystal Shape
-		var relic_poly := Polygon2D.new()
-		relic_poly.polygon = PackedVector2Array([
-			Vector2(0.0, -14.0),
-			Vector2(10.0, -3.0),
-			Vector2(7.0, 10.0),
-			Vector2(-7.0, 10.0),
-			Vector2(-10.0, -3.0)
-		])
-		relic_poly.color = relic_color
-		relic_container.add_child(relic_poly)
+			# Faceted Relic Crystal Shape
+			var relic_poly := Polygon2D.new()
+			relic_poly.polygon = PackedVector2Array([
+				Vector2(0.0, -14.0),
+				Vector2(10.0, -3.0),
+				Vector2(7.0, 10.0),
+				Vector2(-7.0, 10.0),
+				Vector2(-10.0, -3.0)
+			])
+			relic_poly.color = relic_color
+			relic_container.add_child(relic_poly)
 
-		# Highlight
-		var hi := Polygon2D.new()
-		hi.polygon = PackedVector2Array([
-			Vector2(0.0, -9.0),
-			Vector2(5.0, -2.0),
-			Vector2(3.0, 5.0),
-			Vector2(-3.0, 5.0),
-			Vector2(-5.0, -2.0)
-		])
-		hi.color = Color.WHITE.lerp(relic_color, 0.4)
-		relic_container.add_child(hi)
+			# Highlight
+			var hi := Polygon2D.new()
+			hi.polygon = PackedVector2Array([
+				Vector2(0.0, -9.0),
+				Vector2(5.0, -2.0),
+				Vector2(3.0, 5.0),
+				Vector2(-3.0, 5.0),
+				Vector2(-5.0, -2.0)
+			])
+			hi.color = Color.WHITE.lerp(relic_color, 0.4)
+			relic_container.add_child(hi)
 
-		# Floating animation on the relic
-		var tween := relic_container.create_tween().set_loops()
-		tween.tween_property(relic_container, "position:y", -42.0, 1.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		tween.tween_property(relic_container, "position:y", -36.0, 1.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			# Floating animation on the relic
+			var tween := relic_container.create_tween().set_loops()
+			tween.tween_property(relic_container, "position:y", -42.0, 1.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+			tween.tween_property(relic_container, "position:y", -36.0, 1.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 		info_label.text = "%s\n$%d cr" % [relic_name, int(relic_data.get("value", 0))]
 		info_label.add_theme_color_override("font_color", relic_color)
@@ -543,6 +550,8 @@ func _on_alien_inspect_pedestal(alien: CharacterBody2D, pedestal_idx: int) -> vo
 		if is_study_unlocked:
 			fee = 25
 		bp.gold += fee
+		if bp.has_method("play_sfx"):
+			bp.play_sfx("cash")
 
 		# 2. Spawn floating admission text
 		var fee_note: String = "+$%d Admission!" % fee
@@ -613,11 +622,7 @@ func _handle_player_movement(_delta: float) -> void:
 	player.position.x = clampf(player.position.x, 220.0, 930.0)
 	player.position.y = clampf(player.position.y, 140.0, 585.0)
 
-	# Flip character visuals / sprite according to walking direction
-	var vis = player.get_node_or_null("CharacterVisuals")
-	if vis != null and absf(player.velocity.x) > 5.0:
-		vis.scale.x = -1.0 if player.velocity.x < 0.0 else 1.0
-
+	# Legacy sprite fallback flipping if not using VisualRig
 	var sprite: Sprite2D = player.get_node_or_null("Sprite2D") as Sprite2D
 	if sprite != null and absf(player.velocity.x) > 5.0:
 		sprite.flip_h = player.velocity.x < 0.0
@@ -728,6 +733,8 @@ func _handle_pedestal_key_input(event: InputEvent) -> void:
 			val = int(round(float(val) * mult))
 
 			bp.gold += val
+			if bp.has_method("play_sfx"):
+				bp.play_sfx("cash")
 			bp.clear_pedestal_relic(nearest_idx)
 			_refresh_pedestal_display(nearest_idx)
 			_spawn_floating_cash_text(PEDESTAL_POSITIONS[nearest_idx] + Vector2(0.0, -60.0), "+$%d Sold!" % val)
