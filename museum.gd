@@ -600,6 +600,10 @@ func _show_visitor_review(alien_name: String, relic_name: String, desc: String) 
 func _handle_player_movement(_delta: float) -> void:
 	if player == null:
 		return
+	var bp_ui = _get_backpack()
+	if bp_ui != null and bp_ui.has_method("is_backpack_ui_open") and bp_ui.is_backpack_ui_open():
+		player.velocity = Vector2.ZERO
+		return
 
 	var input_dir: Vector2 = Vector2.ZERO
 	var left: bool = Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT) or Input.is_action_pressed("ui_left")
@@ -700,7 +704,8 @@ func _handle_pedestal_key_input(event: InputEvent) -> void:
 				_refresh_pedestal_display(nearest_idx)
 				_spawn_floating_cash_text(player.position + Vector2(0.0, -40.0), "Relic Taken Back!")
 			else:
-				_spawn_floating_cash_text(player.position + Vector2(0.0, -40.0), "Backpack Too Heavy!")
+				var err_txt: String = bp.get_add_item_error(relic_id) if bp.has_method("get_add_item_error") else "Backpack Too Heavy!"
+				_spawn_floating_cash_text(player.position + Vector2(0.0, -40.0), err_txt)
 		else:
 			# Exhibit first identified item from backpack
 			if not bp.items.is_empty():
@@ -925,6 +930,10 @@ func _setup_inventory_ui() -> void:
 
 
 func _toggle_inventory() -> void:
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("toggle_backpack_ui"):
+		bp.toggle_backpack_ui()
+		return
 	if inventory_modal == null:
 		return
 	inventory_modal.visible = not inventory_modal.visible

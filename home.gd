@@ -690,8 +690,10 @@ func _handle_player_movement() -> void:
 	if player == null:
 		return
 
-	# Freeze player movement while any modal is open
-	if current_open_modal != "" or (inventory_modal != null and inventory_modal.visible):
+	# Freeze player movement while any modal or 3D crate is open
+	var bp_ui = _get_backpack()
+	var crate_open: bool = bp_ui != null and bp_ui.has_method("is_backpack_ui_open") and bp_ui.is_backpack_ui_open()
+	if crate_open or current_open_modal != "" or (inventory_modal != null and inventory_modal.visible):
 		player.velocity = Vector2.ZERO
 		return
 
@@ -1976,6 +1978,10 @@ func _setup_inventory_ui() -> void:
 
 
 func _toggle_inventory() -> void:
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("toggle_backpack_ui"):
+		bp.toggle_backpack_ui()
+		return
 	if inventory_modal == null:
 		return
 	inventory_modal.visible = not inventory_modal.visible

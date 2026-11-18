@@ -9,6 +9,7 @@ signal item_added(item: Dictionary)
 signal item_removed(item: Dictionary)
 signal item_dropped(relic_id: String)
 signal vip_quest_updated
+signal gravity_settled(moved_items: Dictionary)
 
 ## Global persistent stats across scenes
 var gold: int = 300
@@ -50,133 +51,253 @@ var max_weight: float = 15.0
 
 const SAVE_FILE_PATH: String = "user://savegame.json"
 const RELICS_DATA_PATH: String = "res://relics_data.json"
+const GRID_UNIT_PX: float = 32.0
 
-## Fallback relic dictionary in case JSON is missing or corrupted
+## Master Building & Character Asset Registry
+## Defines canonical sprite file paths and target in-game pixel dimensions [width_px, height_px]
+const ASSET_CATALOG: Dictionary = {
+	"characters": {
+		"diver": {
+			"id": "diver",
+			"sprite_path": "res://assets/characters/diver.png",
+			"target_px": [72, 72]
+		},
+		"survivor": {
+			"id": "survivor",
+			"sprite_path": "res://assets/characters/survivor.png",
+			"target_px": [64, 64]
+		}
+	},
+	"buildings": {
+		"museum": {
+			"id": "museum",
+			"sprite_path": "res://assets/buildings/museum.png",
+			"target_px": [256, 256]
+		},
+		"home": {
+			"id": "home",
+			"sprite_path": "res://assets/buildings/home.png",
+			"target_px": [256, 256]
+		},
+		"workshop_o2": {
+			"id": "workshop_o2",
+			"sprite_path": "res://assets/buildings/workshop_o2.png",
+			"target_px": [192, 192]
+		},
+		"workshop_exo": {
+			"id": "workshop_exo",
+			"sprite_path": "res://assets/buildings/workshop_exo.png",
+			"target_px": [192, 192]
+		}
+	}
+}
+
+## Fallback Master Item Library in case res://relics_data.json is missing or corrupted
 var RELIC_DB: Dictionary = {
 	"relic_keyboard": {
 		"id": "relic_keyboard",
 		"name": "Barnacle-Crusted Mechanical Keyboard",
-		"weight": 2.5,
-		"value": 150,
-		"min_depth": 15.0,
-		"rarity": "Common",
+		"set": "21st Century Computing",
 		"set_name": "21st Century Computing",
+		"value": 150,
+		"rarity": "Common",
+		"min_depth": 15.0,
+		"lore": "Ancient ritual altar with 104 clickable tactile switches once used to commune with silicon gods.",
+		"alien_desc": "Ancient ritual altar with 104 clickable tactile switches once used to commune with silicon gods.",
+		"size_3d": [3, 1, 2],
+		"weight": 2,
+		"fragile": false,
 		"color": Color.CYAN,
 		"color_hex": "#00ffff",
+		"sprite_path": "res://assets/relics/relic_keyboard.png",
 		"icon_path": "res://assets/relics/relic_keyboard.png",
-		"alien_desc": "Ancient ritual altar with 104 clickable switches."
+		"target_px": [96, 32],
+		"ai_prompt": ""
 	},
 	"relic_mouse": {
 		"id": "relic_mouse",
 		"name": "Optical Gaming Mouse",
-		"weight": 0.8,
-		"value": 110,
-		"min_depth": 25.0,
-		"rarity": "Common",
+		"set": "21st Century Computing",
 		"set_name": "21st Century Computing",
+		"value": 110,
+		"rarity": "Common",
+		"min_depth": 25.0,
+		"lore": "Handheld tracking rodent with a glowing cyan optical eye and braided tail.",
+		"alien_desc": "Handheld tracking rodent with a glowing cyan optical eye and braided tail.",
+		"size_3d": [1, 1, 1],
+		"weight": 1,
+		"fragile": false,
 		"color": Color(0.2, 0.73, 1.0),
 		"color_hex": "#33bbff",
+		"sprite_path": "res://assets/relics/relic_mouse.png",
 		"icon_path": "res://assets/relics/relic_mouse.png",
-		"alien_desc": "Handheld tracking rodent with a glowing RGB optical eye."
+		"target_px": [32, 32],
+		"ai_prompt": ""
 	},
 	"relic_core": {
 		"id": "relic_core",
 		"name": "Sunken AI Server Core",
-		"weight": 6.5,
-		"value": 650,
-		"min_depth": 160.0,
-		"rarity": "Legendary",
+		"set": "21st Century Computing",
 		"set_name": "21st Century Computing",
+		"value": 650,
+		"rarity": "Legendary",
+		"min_depth": 160.0,
+		"lore": "Heavy quantum-silicon monolith preserving fragments of pre-war human digital consciousness.",
+		"alien_desc": "Heavy quantum-silicon monolith preserving fragments of pre-war human digital consciousness.",
+		"size_3d": [2, 3, 2],
+		"weight": 5,
+		"fragile": true,
 		"color": Color.MAGENTA,
 		"color_hex": "#ff00ff",
+		"sprite_path": "res://assets/relics/relic_core.png",
 		"icon_path": "res://assets/relics/relic_core.png",
-		"alien_desc": "Heavy silicon monolith containing pre-war digital human consciousness."
+		"target_px": [64, 96],
+		"ai_prompt": ""
 	},
 	"relic_cup": {
 		"id": "relic_cup",
 		"name": "Rusty Thermal Mug",
-		"weight": 1.2,
-		"value": 80,
-		"min_depth": 10.0,
-		"rarity": "Common",
+		"set": "Daily Café Life",
 		"set_name": "Daily Café Life",
+		"value": 80,
+		"rarity": "Common",
+		"min_depth": 10.0,
+		"lore": "Insulated vessel once used to hold dark caffeinated morning stimulant for office workers.",
+		"alien_desc": "Insulated vessel once used to hold dark caffeinated morning stimulant for office workers.",
+		"size_3d": [1, 2, 1],
+		"weight": 1,
+		"fragile": true,
 		"color": Color.ORANGE,
 		"color_hex": "#ff9933",
+		"sprite_path": "res://assets/relics/relic_cup.png",
 		"icon_path": "res://assets/relics/relic_cup.png",
-		"alien_desc": "Insulated vessel once used to hold dark caffeinated morning stimulant."
+		"target_px": [32, 64],
+		"ai_prompt": ""
 	},
 	"relic_toaster": {
 		"id": "relic_toaster",
 		"name": "Chrome Bread Warmer",
-		"weight": 3.2,
-		"value": 240,
-		"min_depth": 85.0,
-		"rarity": "Rare",
+		"set": "Daily Café Life",
 		"set_name": "Daily Café Life",
+		"value": 240,
+		"rarity": "Rare",
+		"min_depth": 85.0,
+		"lore": "Dual-slot thermal catapult designed to scorch carbohydrate slices to golden perfection.",
+		"alien_desc": "Dual-slot thermal catapult designed to scorch carbohydrate slices to golden perfection.",
+		"size_3d": [2, 2, 2],
+		"weight": 3,
+		"fragile": false,
 		"color": Color(1.0, 0.84, 0.0),
 		"color_hex": "#ffd700",
+		"sprite_path": "res://assets/relics/relic_toaster.png",
 		"icon_path": "res://assets/relics/relic_toaster.png",
-		"alien_desc": "Dual-slot thermal catapult designed to scorch carbohydrate slices."
+		"target_px": [64, 64],
+		"ai_prompt": ""
 	},
 	"relic_console": {
 		"id": "relic_console",
 		"name": "Ancient Handheld Console",
-		"weight": 1.8,
-		"value": 380,
-		"min_depth": 110.0,
-		"rarity": "Rare",
+		"set": "Daily Café Life",
 		"set_name": "Daily Café Life",
+		"value": 380,
+		"rarity": "Rare",
+		"min_depth": 110.0,
+		"lore": "Portable silicon entertainment brick with a directional cross pad and glowing pixel screen.",
+		"alien_desc": "Portable silicon entertainment brick with a directional cross pad and glowing pixel screen.",
+		"size_3d": [2, 2, 1],
+		"weight": 2,
+		"fragile": true,
 		"color": Color(1.0, 0.33, 0.53),
 		"color_hex": "#ff5588",
+		"sprite_path": "res://assets/relics/relic_console.png",
 		"icon_path": "res://assets/relics/relic_console.png",
-		"alien_desc": "Portable silicon entertainment brick with directional cross pad."
+		"target_px": [64, 64],
+		"ai_prompt": ""
 	},
 	"relic_dogtag": {
 		"id": "relic_dogtag",
 		"name": "Tarnished Titanium Dogtags",
-		"weight": 0.4,
-		"value": 190,
-		"min_depth": 45.0,
-		"rarity": "Common",
+		"set": "Resource War Remnants",
 		"set_name": "Resource War Remnants",
+		"value": 190,
+		"rarity": "Common",
+		"min_depth": 45.0,
+		"lore": "Stamped metal identity plates worn by pre-war oceanic defense personnel.",
+		"alien_desc": "Stamped metal identity plates worn by pre-war oceanic defense personnel.",
+		"size_3d": [1, 1, 1],
+		"weight": 1,
+		"fragile": false,
 		"color": Color(0.75, 0.75, 0.75),
 		"color_hex": "#c0c0c0",
+		"sprite_path": "res://assets/relics/relic_dogtag.png",
 		"icon_path": "res://assets/relics/relic_dogtag.png",
-		"alien_desc": "Stamped metal identity plates of pre-war oceanic combat personnel."
+		"target_px": [32, 32],
+		"ai_prompt": ""
 	},
 	"relic_mask": {
 		"id": "relic_mask",
 		"name": "Cracked Gas Mask",
-		"weight": 3.0,
-		"value": 280,
-		"min_depth": 95.0,
-		"rarity": "Rare",
+		"set": "Resource War Remnants",
 		"set_name": "Resource War Remnants",
+		"value": 280,
+		"rarity": "Rare",
+		"min_depth": 95.0,
+		"lore": "Late-war synthetic breathing apparatus with cracked reinforced lenses from the final coastal evacuation.",
+		"alien_desc": "Late-war synthetic breathing apparatus with cracked reinforced lenses from the final coastal evacuation.",
+		"size_3d": [2, 2, 1],
+		"weight": 1,
+		"fragile": true,
 		"color": Color.GREEN_YELLOW,
 		"color_hex": "#adff2f",
+		"sprite_path": "res://assets/relics/relic_mask.png",
 		"icon_path": "res://assets/relics/relic_mask.png",
-		"alien_desc": "Late-war synthetic breathing apparatus with cracked reinforced lenses."
+		"target_px": [64, 64],
+		"ai_prompt": ""
 	},
 	"blueprint_tube": {
 		"id": "blueprint_tube",
 		"name": "Pre-War Architectural Blueprint",
-		"weight": 0.5,
-		"value": 200,
-		"min_depth": 40.0,
-		"rarity": "Rare",
+		"set": "Survivor Technology",
 		"set_name": "Survivor Technology",
+		"value": 200,
+		"rarity": "Rare",
+		"min_depth": 40.0,
+		"lore": "Hermetically sealed alloy canister holding modular human habitat expansion schematics.",
+		"alien_desc": "Hermetically sealed alloy canister holding modular human habitat expansion schematics.",
+		"size_3d": [2, 1, 1],
+		"weight": 1,
+		"fragile": false,
 		"color": Color.DEEP_SKY_BLUE,
 		"color_hex": "#00bfff",
+		"sprite_path": "res://assets/relics/relic_blueprint.png",
 		"icon_path": "res://assets/relics/relic_blueprint.png",
-		"alien_desc": "Hermetically sealed alloy canister holding modular human hab schematics."
+		"target_px": [64, 32],
+		"ai_prompt": ""
 	}
 }
 
 ## List of collected relic instances currently in the backpack
+## Each item includes: { "uid": int, "id": String, "cleaned": bool, "identified": bool, "pos": Vector3i, "size": Vector3i, ... }
 var items: Array[Dictionary] = []
+
+## 3D Volumetric Grid: grid_3d[x][y][z] holds item uid (int) or -1 if empty
+var grid_3d: Array = []
+var _next_item_uid: int = 1
 
 ## Current cumulative cargo weight in kilograms
 var current_weight: float = 0.0
+
+## Global 3D Volumetric Crate Inspector UI (CanvasLayer)
+var _crate_layer: CanvasLayer = null
+var _crate_modal: Control = null
+var _crate_viewport: Control = null
+var _crate_stats_label: Label = null
+var _crate_layer_bar: HBoxContainer = null
+var _crate_inspector_title: Label = null
+var _crate_inspector_meta: Label = null
+var _crate_inspector_lore: Label = null
+var _crate_drop_btn: Button = null
+var _crate_status_label: Label = null
 
 ## Global Codex UI CanvasLayer instance
 var _codex_layer: CanvasLayer = null
@@ -194,7 +315,9 @@ var _sfx_cache: Dictionary = {}
 func _ready() -> void:
 	_init_sfx()
 	_load_relics_from_json()
+	_rebuild_grid_3d()
 	load_game()
+	_rebuild_grid_3d()
 	if active_vip_quest.is_empty():
 		generate_daily_vip_quest()
 
@@ -356,8 +479,65 @@ func _synthesize_sfx(sfx_type: String) -> PackedVector2Array:
 	return frames
 
 
-## Loads data-driven relics definitions from res://relics_data.json
+## Normalizes a Master Item Library entry, ensuring standardized 3D/asset fields
+## and backward-compatible aliases (set_name, alien_desc, icon_path) are populated.
+func _normalize_relic_entry(relic_id: String, raw: Dictionary) -> Dictionary:
+	var r_data: Dictionary = raw.duplicate(true)
+	r_data["id"] = str(r_data.get("id", relic_id))
+
+	# Standardize "set" <-> "set_name"
+	var set_val: String = str(r_data.get("set", r_data.get("set_name", "Unknown Set")))
+	r_data["set"] = set_val
+	r_data["set_name"] = set_val
+
+	# Standardize "lore" <-> "alien_desc"
+	var lore_val: String = str(r_data.get("lore", r_data.get("alien_desc", "")))
+	r_data["lore"] = lore_val
+	r_data["alien_desc"] = lore_val
+
+	# Standardize "sprite_path" <-> "icon_path"
+	var path_val: String = str(r_data.get("sprite_path", r_data.get("icon_path", "res://assets/relics/%s.png" % relic_id)))
+	r_data["sprite_path"] = path_val
+	r_data["icon_path"] = path_val
+
+	# Standardize 3D volume grid dimensions [width_x, height_y, thickness_z]
+	var s3d = r_data.get("size_3d", [1, 1, 1])
+	var sx: int = 1
+	var sy: int = 1
+	var sz: int = 1
+	if s3d is Array and s3d.size() >= 3:
+		sx = maxi(int(s3d[0]), 1)
+		sy = maxi(int(s3d[1]), 1)
+		sz = maxi(int(s3d[2]), 1)
+	r_data["size_3d"] = [sx, sy, sz]
+
+	# Standardize target_px [width_px, height_px] proportionally from size_3d (1 unit = 32px)
+	var tpx = r_data.get("target_px", [])
+	if tpx is Array and tpx.size() >= 2 and float(tpx[0]) > 0.0 and float(tpx[1]) > 0.0:
+		r_data["target_px"] = [int(tpx[0]), int(tpx[1])]
+	else:
+		r_data["target_px"] = [int(sx * GRID_UNIT_PX), int(sy * GRID_UNIT_PX)]
+
+	# Standardize weight (int 1..5) and fragile (bool)
+	r_data["weight"] = clampi(int(round(float(r_data.get("weight", 1)))), 1, 5)
+	r_data["fragile"] = bool(r_data.get("fragile", false))
+	r_data["ai_prompt"] = str(r_data.get("ai_prompt", ""))
+
+	# Ensure Color property exists from color_hex
+	if r_data.has("color_hex"):
+		r_data["color"] = Color.from_string(str(r_data["color_hex"]), Color.WHITE)
+	elif not r_data.has("color"):
+		r_data["color"] = Color.WHITE
+
+	return r_data
+
+
+## Loads data-driven Master Item Library definitions from res://relics_data.json
 func _load_relics_from_json() -> void:
+	# Always normalize fallback entries first
+	for fallback_key in RELIC_DB.keys():
+		RELIC_DB[fallback_key] = _normalize_relic_entry(str(fallback_key), RELIC_DB[fallback_key])
+
 	if not FileAccess.file_exists(RELICS_DATA_PATH):
 		return
 
@@ -373,17 +553,59 @@ func _load_relics_from_json() -> void:
 	var parsed = JSON.parse_string(text_content)
 	if parsed is Dictionary:
 		for k in parsed.keys():
-			var r_data: Dictionary = parsed[k]
-			# Ensure color property exists from color_hex
-			if r_data.has("color_hex"):
-				r_data["color"] = Color.from_string(str(r_data["color_hex"]), Color.WHITE)
-			elif not r_data.has("color"):
-				r_data["color"] = Color.WHITE
-			RELIC_DB[str(k)] = r_data
+			if parsed[k] is Dictionary:
+				RELIC_DB[str(k)] = _normalize_relic_entry(str(k), parsed[k])
+
+
+## Looks up a canonical asset specification (sprite_path & target_px) by asset ID or file path
+## across ASSET_CATALOG (characters, buildings) and RELIC_DB (relics).
+func get_asset_spec(id_or_path: String) -> Dictionary:
+	if id_or_path.is_empty():
+		return {}
+
+	# 1. Direct key lookup in ASSET_CATALOG categories
+	for category in ASSET_CATALOG.keys():
+		var group: Dictionary = ASSET_CATALOG[category]
+		if group.has(id_or_path):
+			return group[id_or_path]
+		for entry_id in group.keys():
+			var spec: Dictionary = group[entry_id]
+			if str(spec.get("sprite_path", "")) == id_or_path:
+				return spec
+
+	# 2. Direct key or sprite_path lookup in RELIC_DB
+	if RELIC_DB.has(id_or_path):
+		return RELIC_DB[id_or_path]
+	for rid in RELIC_DB.keys():
+		var r_spec: Dictionary = RELIC_DB[rid]
+		if str(r_spec.get("sprite_path", "")) == id_or_path or str(r_spec.get("icon_path", "")) == id_or_path:
+			return r_spec
+
+	return {}
+
+
+## Returns the 3D backpack grid volume (width_x, height_y, thickness_z) for a relic.
+func get_relic_size_3d(relic_id: String) -> Vector3i:
+	var r_data: Dictionary = RELIC_DB.get(relic_id, {})
+	var s3d = r_data.get("size_3d", [1, 1, 1])
+	if s3d is Array and s3d.size() >= 3:
+		return Vector3i(maxi(int(s3d[0]), 1), maxi(int(s3d[1]), 1), maxi(int(s3d[2]), 1))
+	return Vector3i(1, 1, 1)
+
+
+## Returns the canonical target display pixel size Vector2(width_px, height_px) for a relic.
+## Reads "target_px" directly or computes proportionally from "size_3d" (1 unit = 32px).
+func get_relic_target_px(relic_id: String) -> Vector2:
+	var r_data: Dictionary = RELIC_DB.get(relic_id, {})
+	var tpx = r_data.get("target_px", [])
+	if tpx is Array and tpx.size() >= 2 and float(tpx[0]) > 0.0 and float(tpx[1]) > 0.0:
+		return Vector2(float(tpx[0]), float(tpx[1]))
+	var s3d: Vector3i = get_relic_size_3d(relic_id)
+	return Vector2(float(s3d.x) * GRID_UNIT_PX, float(s3d.y) * GRID_UNIT_PX)
 
 
 # ==============================================================================
-# Smart Sprite Auto-Loader Pipeline (Direction 4)
+# Smart Sprite Auto-Loader Pipeline (Master Asset Registry Powered)
 # ==============================================================================
 
 ## Animated Smart Sprite that automatically cycles horizontal animation sheets
@@ -400,17 +622,37 @@ class SmartAnimatedSprite extends Sprite2D:
 				frame = (frame + 1) % hframes
 
 
-## Dynamically loads a PNG texture if it exists on disk, centers & scales it to target_node,
-## auto-detects horizontal animation strips (width >= height * 2), sets NEAREST filter,
-## and hides procedural placeholder geometry (Polygon2D, ColorRect, Line2D).
-static func load_smart_sprite(target_node: Node2D, path: String, target_size: Vector2 = Vector2.ZERO, pivot_offset: Vector2 = Vector2.ZERO) -> Sprite2D:
-	if target_node == null or path.is_empty():
+## Dynamically loads a PNG texture by registry ID ("museum", "diver", "relic_keyboard") OR res:// path.
+## Automatically resolves "sprite_path" and "target_px" / "size_3d" from ASSET_CATALOG / RELIC_DB,
+## scales any raw PNG resolution (e.g. 512x512, 1024x1024) proportionally to fit its exact in-game
+## pixel bounds without aspect distortion, sets NEAREST filter, and hides procedural placeholders.
+func load_smart_sprite(target_node: Node2D, path_or_id: String, target_size: Vector2 = Vector2.ZERO, pivot_offset: Vector2 = Vector2.ZERO) -> Sprite2D:
+	if target_node == null or path_or_id.is_empty():
 		return null
 
-	if not ResourceLoader.exists(path):
+	# Resolve registry specification from ASSET_CATALOG or RELIC_DB
+	var spec: Dictionary = get_asset_spec(path_or_id)
+	var resolved_path: String = path_or_id
+	if not spec.is_empty():
+		var spec_path: String = str(spec.get("sprite_path", ""))
+		if not spec_path.is_empty():
+			resolved_path = spec_path
+
+	# Auto-populate target_size from registry target_px or size_3d if caller passed Vector2.ZERO
+	var resolved_size: Vector2 = target_size
+	if resolved_size == Vector2.ZERO and not spec.is_empty():
+		var tpx = spec.get("target_px", [])
+		if tpx is Array and tpx.size() >= 2 and float(tpx[0]) > 0.0 and float(tpx[1]) > 0.0:
+			resolved_size = Vector2(float(tpx[0]), float(tpx[1]))
+		elif spec.has("size_3d"):
+			var s3d = spec["size_3d"]
+			if s3d is Array and s3d.size() >= 2:
+				resolved_size = Vector2(float(s3d[0]) * GRID_UNIT_PX, float(s3d[1]) * GRID_UNIT_PX)
+
+	if not ResourceLoader.exists(resolved_path):
 		return null
 
-	var tex := load(path) as Texture2D
+	var tex := load(resolved_path) as Texture2D
 	if tex == null:
 		return null
 
@@ -428,7 +670,10 @@ static func load_smart_sprite(target_node: Node2D, path: String, target_size: Ve
 	var tw: float = float(tex.get_width())
 	var th: float = float(tex.get_height())
 	var h_frames: int = 1
-	if th > 0.0 and tw >= th * 2.0:
+	var target_aspect: float = (resolved_size.x / resolved_size.y) if (resolved_size.y > 0.0) else 1.0
+	var is_explicit_sheet: bool = resolved_path.contains("_sheet") or resolved_path.contains("_strip") or resolved_path.contains("_anim")
+	# Only auto-slice horizontal strips if texture is >=2x wide AND target isn't already a wide static item (e.g. 3x1 keyboard)
+	if th > 0.0 and tw >= th * 2.0 and (is_explicit_sheet or target_aspect <= 1.5):
 		h_frames = int(tw / th)
 		sprite.hframes = h_frames
 		sprite.frame = 0
@@ -438,8 +683,10 @@ static func load_smart_sprite(target_node: Node2D, path: String, target_size: Ve
 
 	var frame_w: float = tw / float(h_frames)
 	var frame_h: float = th
-	if target_size != Vector2.ZERO and frame_w > 0.0 and frame_h > 0.0:
-		sprite.scale = Vector2(target_size.x / frame_w, target_size.y / frame_h)
+	if resolved_size != Vector2.ZERO and frame_w > 0.0 and frame_h > 0.0:
+		# Uniform aspect-preserving fit so 512x512, 1024x1024, or non-square AI PNGs never squash or overflow target_px
+		var uniform_scale: float = minf(resolved_size.x / frame_w, resolved_size.y / frame_h)
+		sprite.scale = Vector2(uniform_scale, uniform_scale)
 	else:
 		sprite.scale = Vector2.ONE
 
@@ -838,7 +1085,18 @@ class VisualRig extends Node2D:
 		tween.chain().tween_callback(dust.queue_free)
 
 	func _build_base_body() -> void:
-		var char_tex_path: String = "res://assets/characters/diver.png" if is_swimming else "res://assets/characters/survivor.png"
+		var char_id: String = "diver" if is_swimming else "survivor"
+		var char_tex_path: String = "res://assets/characters/%s.png" % char_id
+		var target_px: Vector2 = Vector2(72.0, 72.0) if is_swimming else Vector2(64.0, 64.0)
+
+		if bp_ref != null and bp_ref.has_method("get_asset_spec"):
+			var spec: Dictionary = bp_ref.get_asset_spec(char_id)
+			if not spec.is_empty():
+				char_tex_path = str(spec.get("sprite_path", char_tex_path))
+				var tpx = spec.get("target_px", [])
+				if tpx is Array and tpx.size() >= 2:
+					target_px = Vector2(float(tpx[0]), float(tpx[1]))
+
 		var exists: bool = ResourceLoader.exists(char_tex_path) or FileAccess.file_exists(char_tex_path)
 		if exists:
 			var tex := load(char_tex_path) as Texture2D
@@ -848,17 +1106,15 @@ class VisualRig extends Node2D:
 				spr.texture = tex
 				spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
-				var max_dim: float = 72.0 if is_swimming else 64.0
 				var tex_w: float = float(tex.get_width())
 				var tex_h: float = float(tex.get_height())
-				var tex_max: float = maxf(tex_w, tex_h)
-				var scale_factor: float = max_dim / maxf(tex_max, 1.0)
+				var scale_factor: float = minf(target_px.x / maxf(tex_w, 1.0), target_px.y / maxf(tex_h, 1.0))
 				spr.scale = Vector2(scale_factor, scale_factor)
 
 				if is_swimming:
 					spr.position = Vector2.ZERO
 				else:
-					spr.position = Vector2(0.0, -max_dim * 0.5)
+					spr.position = Vector2(0.0, -(tex_h * scale_factor) * 0.5)
 
 				body_pivot.add_child(spr)
 				has_custom_sprite = true
@@ -1785,9 +2041,9 @@ class RelicVisualNode extends Node2D:
 				shimmer_spark.scale = Vector2.ONE * (0.8 + sin(_anim_time * 4.0) * 0.25)
 
 
-## Builds a 4-state visual node for a relic:
-## "underwater_buried", "encrusted_icon", "clean_icon", "pedestal_25d"
-func build_relic_visual(relic_id: String, state: String) -> Node2D:
+## Builds a standardized multi-state visual node for a relic using RELIC_DB's sprite_path & target_px / size_3d:
+## "underwater_buried", "encrusted_icon", "clean_icon", "pedestal_25d", "backpack_3d"
+func build_relic_visual(relic_id: String, state: String, custom_target_px: Vector2 = Vector2.ZERO) -> Node2D:
 	var root := RelicVisualNode.new()
 	root.name = "RelicVisual_%s" % state
 	root.visual_state = state
@@ -1799,26 +2055,28 @@ func build_relic_visual(relic_id: String, state: String) -> Node2D:
 		r_color = relic_data["color"]
 	root.relic_color = r_color
 
-	var icon_p: String = str(relic_data.get("icon_path", "res://assets/relics/%s.png" % relic_id))
+	var sprite_p: String = str(relic_data.get("sprite_path", relic_data.get("icon_path", "res://assets/relics/%s.png" % relic_id)))
+	var target_px: Vector2 = custom_target_px if custom_target_px != Vector2.ZERO else get_relic_target_px(relic_id)
 
 	if state == "underwater_buried":
 		root.rotation = deg_to_rad(14.0)
 
-		# 1. Pulsing underwater glint halo
-		var halo := Polygon2D.new()
-		halo.name = "BuriedHalo"
-		halo.polygon = _make_ellipse(24.0, 14.0)
-		halo.color = Color(r_color.r, r_color.g, r_color.b, 0.26)
-		root.add_child(halo)
-		root.halo_poly = halo
-
-		# 2. Base relic (custom buried PNG -> clean PNG -> procedural crystal)
+		# 1. Base relic (custom buried PNG -> Master Library sprite_path -> procedural crystal)
 		var custom_buried: String = "res://assets/relics/%s_buried.png" % relic_id
 		var loaded_spr: Sprite2D = null
 		if ResourceLoader.exists(custom_buried):
-			loaded_spr = load_smart_sprite(root, custom_buried, Vector2(36.0, 36.0))
-		elif ResourceLoader.exists(icon_p):
-			loaded_spr = load_smart_sprite(root, icon_p, Vector2(32.0, 32.0))
+			loaded_spr = load_smart_sprite(root, custom_buried, target_px)
+		elif ResourceLoader.exists(sprite_p):
+			loaded_spr = load_smart_sprite(root, sprite_p, target_px)
+
+		# 2. Pulsing underwater glint halo (added after smart sprite so it stays visible)
+		var halo := Polygon2D.new()
+		halo.name = "BuriedHalo"
+		halo.z_index = -1
+		halo.polygon = _make_ellipse(maxf(target_px.x * 0.45, 22.0), maxf(target_px.y * 0.35, 14.0))
+		halo.color = Color(r_color.r, r_color.g, r_color.b, 0.26)
+		root.add_child(halo)
+		root.halo_poly = halo
 
 		if loaded_spr == null:
 			var crystal := Polygon2D.new()
@@ -1873,7 +2131,7 @@ func build_relic_visual(relic_id: String, state: String) -> Node2D:
 		var encrusted_p: String = "res://assets/relics/%s_encrusted.png" % relic_id
 		var loaded_spr: Sprite2D = null
 		if ResourceLoader.exists(encrusted_p):
-			loaded_spr = load_smart_sprite(root, encrusted_p, Vector2(32.0, 32.0))
+			loaded_spr = load_smart_sprite(root, encrusted_p, target_px)
 
 		if loaded_spr == null:
 			var sil := Polygon2D.new()
@@ -1922,48 +2180,39 @@ func build_relic_visual(relic_id: String, state: String) -> Node2D:
 			glint.color = Color(r_color.r, r_color.g, r_color.b, 0.65)
 			root.add_child(glint)
 
-	elif state == "clean_icon":
+	elif state == "clean_icon" or state == "backpack_3d":
 		var loaded_spr: Sprite2D = null
-		if ResourceLoader.exists(icon_p):
-			loaded_spr = load_smart_sprite(root, icon_p, Vector2(32.0, 32.0))
+		if ResourceLoader.exists(sprite_p):
+			loaded_spr = load_smart_sprite(root, sprite_p, target_px)
 
 		if loaded_spr == null:
+			var hw: float = target_px.x * 0.42
+			var hh: float = target_px.y * 0.42
 			var rim := Polygon2D.new()
 			rim.polygon = PackedVector2Array([
-				Vector2(0.0, -15.0), Vector2(12.0, -4.0),
-				Vector2(9.0, 13.0), Vector2(-9.0, 13.0),
-				Vector2(-12.0, -4.0)
+				Vector2(-hw, -hh), Vector2(hw, -hh),
+				Vector2(hw, hh), Vector2(-hw, hh)
 			])
 			rim.color = Color("#151D24")
 			root.add_child(rim)
 
 			var core := Polygon2D.new()
 			core.polygon = PackedVector2Array([
-				Vector2(0.0, -13.5), Vector2(10.5, -3.5),
-				Vector2(7.5, 11.5), Vector2(-7.5, 11.5),
-				Vector2(-10.5, -3.5)
+				Vector2(-hw + 2.0, -hh + 2.0), Vector2(hw - 2.0, -hh + 2.0),
+				Vector2(hw - 2.0, hh - 2.0), Vector2(-hw + 2.0, hh - 2.0)
 			])
 			core.color = r_color
 			root.add_child(core)
 
-			var spec := Polygon2D.new()
-			spec.polygon = PackedVector2Array([
-				Vector2(0.0, -9.0), Vector2(5.5, -2.5),
-				Vector2(3.5, 5.0), Vector2(-3.5, 5.0),
-				Vector2(-5.5, -2.5)
-			])
-			spec.color = Color.WHITE.lerp(r_color, 0.45)
-			root.add_child(spec)
-
 			var dot := Polygon2D.new()
-			dot.polygon = _make_ellipse(1.5, 1.5, Vector2(0.0, -1.0))
+			dot.polygon = _make_ellipse(2.0, 2.0, Vector2(0.0, 0.0))
 			dot.color = Color.WHITE
 			root.add_child(dot)
 
 	elif state == "pedestal_25d":
 		var shadow := Polygon2D.new()
 		shadow.name = "PedestalShadow"
-		shadow.polygon = _make_ellipse(18.0, 8.0, Vector2(0.0, 8.0))
+		shadow.polygon = _make_ellipse(maxf(target_px.x * 0.35, 18.0), 8.0, Vector2(0.0, 8.0))
 		shadow.color = Color(0.0, 0.0, 0.0, 0.45)
 		root.add_child(shadow)
 
@@ -1973,15 +2222,16 @@ func build_relic_visual(relic_id: String, state: String) -> Node2D:
 		root.add_child(hover)
 		root.hover_container = hover
 
+		var loaded_spr: Sprite2D = null
+		if ResourceLoader.exists(sprite_p):
+			loaded_spr = load_smart_sprite(hover, sprite_p, target_px)
+
 		var aura := Polygon2D.new()
 		aura.name = "SpotlightAura"
-		aura.polygon = _make_ellipse(20.0, 13.0)
+		aura.z_index = -1
+		aura.polygon = _make_ellipse(maxf(target_px.x * 0.42, 20.0), maxf(target_px.y * 0.32, 13.0))
 		aura.color = Color(r_color.r, r_color.g, r_color.b, 0.32)
 		hover.add_child(aura)
-
-		var loaded_spr: Sprite2D = null
-		if ResourceLoader.exists(icon_p):
-			loaded_spr = load_smart_sprite(hover, icon_p, Vector2(32.0, 32.0))
 
 		if loaded_spr == null:
 			var crystal := Polygon2D.new()
@@ -2168,49 +2418,404 @@ func fulfill_vip_quest() -> bool:
 
 
 # ==============================================================================
-# Inventory & Weight Calculations
+# 3D Volumetric Gravity Backpack Grid & Physics Engine
 # ==============================================================================
 
-## Checks if an item with relic_id can fit inside the backpack without exceeding max_weight.
+## Returns the 3D backpack crate dimensions Vector3i(max_x, max_y, max_z) scaled by exo_level.
+## Level 1: 5x6x2, Level 2: 6x7x3, Level 3: 7x8x4 (scales +1 per level above 3).
+func get_grid_dimensions() -> Vector3i:
+	var lvl: int = maxi(exo_level, 1)
+	if lvl == 1:
+		return Vector3i(5, 6, 2)
+	elif lvl == 2:
+		return Vector3i(6, 7, 3)
+	elif lvl == 3:
+		return Vector3i(7, 8, 4)
+	return Vector3i(mini(4 + lvl, 9), mini(5 + lvl, 10), mini(1 + lvl, 5))
+
+
+## Allocates an empty 3D grid array grid_3d[x][y][z] filled with -1.
+func _allocate_empty_grid(dims: Vector3i) -> Array:
+	var g: Array = []
+	g.resize(dims.x)
+	for x in range(dims.x):
+		var col: Array = []
+		col.resize(dims.y)
+		for y in range(dims.y):
+			var depth_row: Array = []
+			depth_row.resize(dims.z)
+			for z in range(dims.z):
+				depth_row[z] = -1
+			col[y] = depth_row
+		g[x] = col
+	return g
+
+
+## Rebuilds grid_3d[x][y][z] from the current packed items list (optionally excluding ignore_uid).
+func _rebuild_grid_3d(ignore_uid: int = -1) -> void:
+	var dims: Vector3i = get_grid_dimensions()
+	grid_3d = _allocate_empty_grid(dims)
+
+	for it in items:
+		var uid: int = int(it.get("uid", -1))
+		if uid == -1 or uid == ignore_uid:
+			continue
+		var p: Vector3i = it.get("pos", Vector3i.ZERO)
+		var s: Vector3i = it.get("size", Vector3i.ONE)
+		_stamp_item_in_grid(p, s, uid)
+
+
+func _stamp_item_in_grid(pos: Vector3i, size: Vector3i, uid: int) -> void:
+	var dims: Vector3i = get_grid_dimensions()
+	if grid_3d.size() != dims.x:
+		return
+	for dx in range(size.x):
+		var cx: int = pos.x + dx
+		if cx < 0 or cx >= dims.x:
+			continue
+		for dy in range(size.y):
+			var cy: int = pos.y + dy
+			if cy < 0 or cy >= dims.y:
+				continue
+			for dz in range(size.z):
+				var cz: int = pos.z + dz
+				if cz < 0 or cz >= dims.z:
+					continue
+				grid_3d[cx][cy][cz] = uid
+
+
+func _clear_item_from_grid(pos: Vector3i, size: Vector3i, uid: int) -> void:
+	var dims: Vector3i = get_grid_dimensions()
+	if grid_3d.size() != dims.x:
+		return
+	for dx in range(size.x):
+		var cx: int = pos.x + dx
+		if cx < 0 or cx >= dims.x:
+			continue
+		for dy in range(size.y):
+			var cy: int = pos.y + dy
+			if cy < 0 or cy >= dims.y:
+				continue
+			for dz in range(size.z):
+				var cz: int = pos.z + dz
+				if cz < 0 or cz >= dims.z:
+					continue
+				if int(grid_3d[cx][cy][cz]) == uid:
+					grid_3d[cx][cy][cz] = -1
+
+
+## Checks whether an item of volume `size` can be placed at `pos` without colliding or leaving bounds.
+func can_place_in_grid(pos: Vector3i, size: Vector3i, ignore_uid: int = -1) -> bool:
+	var dims: Vector3i = get_grid_dimensions()
+	if grid_3d.size() != dims.x:
+		_rebuild_grid_3d()
+
+	if pos.x < 0 or pos.y < 0 or pos.z < 0:
+		return false
+	if pos.x + size.x > dims.x or pos.y + size.y > dims.y or pos.z + size.z > dims.z:
+		return false
+
+	for dx in range(size.x):
+		for dy in range(size.y):
+			for dz in range(size.z):
+				var cell_uid: int = int(grid_3d[pos.x + dx][pos.y + dy][pos.z + dz])
+				if cell_uid != -1 and cell_uid != ignore_uid:
+					return false
+	return true
+
+
+## Scans from the top opening (y = 0) across all (x, z) slots for a valid 3D entry volume.
+## Tries default orientation first, then 90-deg X<->Y and X<->Z rotations if blocked.
+func find_top_entry_slot(base_size: Vector3i) -> Dictionary:
+	var dims: Vector3i = get_grid_dimensions()
+	if grid_3d.size() != dims.x:
+		_rebuild_grid_3d()
+
+	var candidate_sizes: Array[Vector3i] = [base_size]
+	var rot_xy := Vector3i(base_size.y, base_size.x, base_size.z)
+	if not candidate_sizes.has(rot_xy):
+		candidate_sizes.append(rot_xy)
+	var flip_xz := Vector3i(base_size.z, base_size.y, base_size.x)
+	if not candidate_sizes.has(flip_xz):
+		candidate_sizes.append(flip_xz)
+	var flip_yz := Vector3i(base_size.x, base_size.z, base_size.y)
+	if not candidate_sizes.has(flip_yz):
+		candidate_sizes.append(flip_yz)
+
+	for sz in candidate_sizes:
+		if sz.x > dims.x or sz.y > dims.y or sz.z > dims.z:
+			continue
+		for z in range(dims.z - sz.z + 1):
+			for x in range(dims.x - sz.x + 1):
+				var entry_pos := Vector3i(x, 0, z)
+				if can_place_in_grid(entry_pos, sz):
+					return {"found": true, "pos": entry_pos, "size": sz}
+
+	return {"found": false, "pos": Vector3i(-1, -1, -1), "size": base_size}
+
+
+## Predicts the resting Y coordinate an item placed at `pos` with `size` will fall to under gravity.
+func predict_drop_y(pos: Vector3i, size: Vector3i, ignore_uid: int = -1) -> int:
+	var dims: Vector3i = get_grid_dimensions()
+	if not can_place_in_grid(pos, size, ignore_uid):
+		return pos.y
+
+	var cur_y: int = pos.y
+	while cur_y + size.y < dims.y:
+		var next_y: int = cur_y + 1
+		if can_place_in_grid(Vector3i(pos.x, next_y, pos.z), size, ignore_uid):
+			cur_y = next_y
+		else:
+			break
+	return cur_y
+
+
+## Applies 3D gravity physics to all packed items inside the backpack.
+## Iterates bottom-to-top (y from max_y - 1 down to 0), dropping each item step-by-step
+## whenever all cells beneath its (x, z) footprint are empty until hitting the floor or another item.
+## Returns a Dictionary mapping moved uid -> { "from_y": int, "to_y": int }.
+func apply_backpack_gravity(emit_signal_flag: bool = true) -> Dictionary:
+	var dims: Vector3i = get_grid_dimensions()
+	_rebuild_grid_3d()
+
+	var initial_y_map: Dictionary = {}
+	for it in items:
+		var uid: int = int(it.get("uid", -1))
+		var p: Vector3i = it.get("pos", Vector3i.ZERO)
+		initial_y_map[uid] = p.y
+
+	var any_moved_pass: bool = true
+	var max_passes: int = dims.y + 4
+	var pass_idx: int = 0
+
+	while any_moved_pass and pass_idx < max_passes:
+		any_moved_pass = false
+		pass_idx += 1
+
+		# Scan strictly bottom-to-top so lower items fall first and clear space for stacked items above
+		for scan_y in range(dims.y - 1, -1, -1):
+			for i in range(items.size()):
+				var it: Dictionary = items[i]
+				var uid: int = int(it.get("uid", -1))
+				var pos: Vector3i = it.get("pos", Vector3i.ZERO)
+				var sz: Vector3i = it.get("size", Vector3i.ONE)
+				if pos.y + sz.y - 1 != scan_y:
+					continue
+
+				# Drop step-by-step while footprint underneath is completely empty
+				while pos.y + sz.y < dims.y:
+					var below_y: int = pos.y + sz.y
+					var can_drop: bool = true
+					for dx in range(sz.x):
+						for dz in range(sz.z):
+							var cell_uid: int = int(grid_3d[pos.x + dx][below_y][pos.z + dz])
+							if cell_uid != -1:
+								can_drop = false
+								break
+						if not can_drop:
+							break
+
+					if not can_drop:
+						break
+
+					# Shift item down by 1 unit in grid_3d
+					for dx in range(sz.x):
+						for dz in range(sz.z):
+							grid_3d[pos.x + dx][pos.y][pos.z + dz] = -1
+							grid_3d[pos.x + dx][below_y][pos.z + dz] = uid
+					pos.y += 1
+					it["pos"] = pos
+					any_moved_pass = true
+
+	var moved_items: Dictionary = {}
+	for it in items:
+		var uid: int = int(it.get("uid", -1))
+		var final_y: int = (it.get("pos", Vector3i.ZERO) as Vector3i).y
+		var start_y: int = int(initial_y_map.get(uid, final_y))
+		if final_y != start_y:
+			moved_items[uid] = {"from_y": start_y, "to_y": final_y}
+
+	if emit_signal_flag and not moved_items.is_empty():
+		gravity_settled.emit(moved_items)
+
+	return moved_items
+
+
+## Returns "" if relic_id can be added (weight + 3D top entry volume), or a descriptive error reason.
+func get_add_item_error(relic_id: String) -> String:
+	if not RELIC_DB.has(relic_id):
+		return "Unknown Relic!"
+
+	var relic_data: Dictionary = RELIC_DB[relic_id]
+	var item_weight: float = float(relic_data.get("weight", 1.0))
+	if (current_weight + item_weight) > (max_weight + 0.001):
+		return "Backpack Too Heavy! (Max %.1f kg)" % max_weight
+
+	var base_size: Vector3i = get_relic_size_3d(relic_id)
+	var entry: Dictionary = find_top_entry_slot(base_size)
+	if not bool(entry.get("found", false)):
+		return "3D Cargo Volume Blocked!"
+
+	return ""
+
+
+## Checks if an item with relic_id can fit inside the backpack (both weight and 3D top-opening space).
 func can_add_item(relic_id: String) -> bool:
 	if not RELIC_DB.has(relic_id):
 		push_warning("Backpack: Unknown relic_id '%s'" % relic_id)
 		return false
-
-	var relic_data: Dictionary = RELIC_DB[relic_id]
-	var item_weight: float = float(relic_data.get("weight", 0.0))
-	return (current_weight + item_weight) <= (max_weight + 0.001)
+	return get_add_item_error(relic_id).is_empty()
 
 
-## Attempts to add a relic into the backpack. Newly salvaged relics start with identified = false (encrusted).
+## Attempts to drop a salvaged relic through the top opening (y=0) of the 3D backpack
+## and settles it to the lowest supported position under gravity.
 func add_item(relic_id: String, is_identified: bool = false) -> bool:
 	if not can_add_item(relic_id):
 		return false
 
 	var base_data: Dictionary = RELIC_DB[relic_id]
+	var base_size: Vector3i = get_relic_size_3d(relic_id)
+	var entry: Dictionary = find_top_entry_slot(base_size)
+	if not bool(entry.get("found", false)):
+		return false
+
 	var item_instance: Dictionary = base_data.duplicate(true)
+	var uid: int = _next_item_uid
+	_next_item_uid += 1
+
+	item_instance["uid"] = uid
+	item_instance["id"] = relic_id
+	item_instance["pos"] = entry["pos"]
+	item_instance["size"] = entry["size"]
 
 	# Architectural blueprints immediately grant +1 blueprint and are already legible
 	if relic_id == "blueprint_tube":
 		blueprints += 1
 		item_instance["identified"] = true
+		item_instance["cleaned"] = true
 	else:
 		item_instance["identified"] = is_identified
+		item_instance["cleaned"] = is_identified
 
 	items.append(item_instance)
 	_recalculate_weight()
+	_rebuild_grid_3d()
+	apply_backpack_gravity(true)
 
 	item_added.emit(item_instance)
 	inventory_changed.emit()
 	return true
 
 
-## Cleans an encrusted relic at index, setting identified = true, harvesting crust, and unlocking in Codex!
+## Returns item dictionary by unique 3D uid, or empty dictionary if not found.
+func get_item_by_uid(uid: int) -> Dictionary:
+	for it in items:
+		if int(it.get("uid", -1)) == uid:
+			return it
+	return {}
+
+
+## Returns index in `items` array for a given uid, or -1.
+func get_item_index_by_uid(uid: int) -> int:
+	for i in range(items.size()):
+		if int(items[i].get("uid", -1)) == uid:
+			return i
+	return -1
+
+
+## Places a dragged item at target_pos with new_size, then triggers 3D gravity settling.
+## Returns Dictionary of moved items { uid -> { from_y, to_y } } if valid, or empty dict if rejected.
+func place_item_at(uid: int, target_pos: Vector3i, new_size: Vector3i) -> Dictionary:
+	var idx: int = get_item_index_by_uid(uid)
+	if idx == -1:
+		return {}
+
+	_rebuild_grid_3d(uid)
+	if not can_place_in_grid(target_pos, new_size, uid):
+		_rebuild_grid_3d()
+		return {}
+
+	items[idx]["pos"] = target_pos
+	items[idx]["size"] = new_size
+	var moved: Dictionary = apply_backpack_gravity(true)
+	save_game()
+	inventory_changed.emit()
+	return moved
+
+
+## Removes an item by its 3D uid, dropping it if emit_drop is true, then settles items above via gravity.
+func remove_item_by_uid(uid: int, emit_drop: bool = true) -> Dictionary:
+	var idx: int = get_item_index_by_uid(uid)
+	if idx == -1:
+		return {}
+	if emit_drop:
+		return remove_item_at(idx)
+	return consume_item_at(idx)
+
+
+## Repacks all currently held items (largest volume first) cleanly into the 3D crate under gravity.
+func auto_pack_all() -> Dictionary:
+	var sorted_items: Array[Dictionary] = items.duplicate()
+	sorted_items.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var sa: Vector3i = a.get("size", Vector3i.ONE)
+		var sb: Vector3i = b.get("size", Vector3i.ONE)
+		var va: int = sa.x * sa.y * sa.z
+		var vb: int = sb.x * sb.y * sb.z
+		if va != vb:
+			return va > vb
+		return int(a.get("weight", 1)) > int(b.get("weight", 1))
+	)
+
+	var dims: Vector3i = get_grid_dimensions()
+	grid_3d = _allocate_empty_grid(dims)
+	var old_y: Dictionary = {}
+	for it in sorted_items:
+		old_y[int(it.get("uid", -1))] = (it.get("pos", Vector3i.ZERO) as Vector3i).y
+
+	for it in sorted_items:
+		var base_sz: Vector3i = get_relic_size_3d(str(it.get("id", "")))
+		var entry: Dictionary = find_top_entry_slot(base_sz)
+		if bool(entry.get("found", false)):
+			var p: Vector3i = entry["pos"]
+			var sz: Vector3i = entry["size"]
+			var drop_y: int = predict_drop_y(p, sz)
+			var final_p := Vector3i(p.x, drop_y, p.z)
+			it["pos"] = final_p
+			it["size"] = sz
+			_stamp_item_in_grid(final_p, sz, int(it.get("uid", -1)))
+
+	items = sorted_items
+	var moved: Dictionary = apply_backpack_gravity(false)
+	for it in items:
+		var uid: int = int(it.get("uid", -1))
+		var fy: int = (it.get("pos", Vector3i.ZERO) as Vector3i).y
+		moved[uid] = {"from_y": 0, "to_y": fy}
+	gravity_settled.emit(moved)
+	save_game()
+	inventory_changed.emit()
+	return moved
+
+
+func get_occupied_cells() -> int:
+	var total: int = 0
+	for it in items:
+		var s: Vector3i = it.get("size", Vector3i.ONE)
+		total += s.x * s.y * s.z
+	return total
+
+
+func get_total_cells() -> int:
+	var d: Vector3i = get_grid_dimensions()
+	return d.x * d.y * d.z
+
+
+## Cleans an encrusted relic at index, setting identified/cleaned = true, harvesting crust, and unlocking in Codex!
 func clean_item_at(index: int) -> Dictionary:
 	if index < 0 or index >= items.size():
 		return {}
 
 	items[index]["identified"] = true
+	items[index]["cleaned"] = true
 	var rid: String = str(items[index].get("id", ""))
 	discovered_relics[rid] = true
 
@@ -2233,15 +2838,16 @@ func unlock_room(room_id: String, gold_cost: int, bp_cost: int) -> bool:
 	return false
 
 
-## Removes the item at index from the items array, subtracts weight, emits item_dropped, and returns item.
+## Removes the item at index from the items array, subtracts weight, applies 3D gravity, emits item_dropped, and returns item.
 func remove_item_at(index: int) -> Dictionary:
 	if index < 0 or index >= items.size():
 		return {}
 
 	var removed_item: Dictionary = items[index]
 	items.remove_at(index)
-	var item_weight: float = float(removed_item.get("weight", 0.0))
-	current_weight = maxf(0.0, snappedf(current_weight - item_weight, 0.01))
+	_recalculate_weight()
+	_rebuild_grid_3d()
+	apply_backpack_gravity(true)
 
 	var relic_id: String = str(removed_item.get("id", ""))
 	item_removed.emit(removed_item)
@@ -2250,15 +2856,16 @@ func remove_item_at(index: int) -> Dictionary:
 	return removed_item
 
 
-## Removes item at index WITHOUT emitting item_dropped (used when placing on a pedestal or selling).
+## Removes item at index WITHOUT emitting item_dropped (used when placing on a pedestal or selling), then applies 3D gravity.
 func consume_item_at(index: int) -> Dictionary:
 	if index < 0 or index >= items.size():
 		return {}
 
 	var removed_item: Dictionary = items[index]
 	items.remove_at(index)
-	var item_weight: float = float(removed_item.get("weight", 0.0))
-	current_weight = maxf(0.0, snappedf(current_weight - item_weight, 0.01))
+	_recalculate_weight()
+	_rebuild_grid_3d()
+	apply_backpack_gravity(true)
 
 	item_removed.emit(removed_item)
 	inventory_changed.emit()
@@ -2274,7 +2881,9 @@ func remove_item(index: int) -> bool:
 ## Clears all items from the backpack.
 func clear_inventory() -> void:
 	items.clear()
+	_next_item_uid = 1
 	current_weight = 0.0
+	_rebuild_grid_3d()
 	inventory_changed.emit()
 
 
@@ -2351,6 +2960,8 @@ func upgrade_exo() -> bool:
 		gold -= cost
 		exo_level += 1
 		max_weight = 15.0 + float(exo_level - 1) * 7.5
+		_rebuild_grid_3d()
+		apply_backpack_gravity(true)
 		play_sfx("cash")
 		save_game()
 		inventory_changed.emit()
@@ -2366,6 +2977,867 @@ func clear_pedestal_relic(pedestal_idx: int) -> void:
 	exhibited_relics.erase(pedestal_idx)
 	save_game()
 	inventory_changed.emit()
+
+
+# ==============================================================================
+# Global 3D Volumetric Gravity Crate Inspector UI ([I] / [Tab])
+# ==============================================================================
+
+## Interactive 2.5D Isometric Cutaway Crate Renderer & Drag/Drop/Rotate Controller
+class CrateViewport3D extends Control:
+	const DEPTH_OFFSET: Vector2 = Vector2(14.0, -10.0)
+
+	var bp_ref: Node = null
+	var active_z_slice: int = 0
+	var hovered_uid: int = -1
+	var selected_uid: int = -1
+
+	# Drag & 3D Rotate state
+	var dragging_uid: int = -1
+	var drag_orig_pos: Vector3i = Vector3i.ZERO
+	var drag_orig_size: Vector3i = Vector3i.ONE
+	var drag_size: Vector3i = Vector3i.ONE
+	var drag_start_mouse: Vector2 = Vector2.ZERO
+	var drag_has_moved: bool = false
+	var drag_mouse_pos: Vector2 = Vector2.ZERO
+
+	# Smooth falling visual Y coordinates per item uid (animated via bounce Tweens)
+	var visual_y_map: Dictionary = {}
+	var _active_tweens: Dictionary = {}
+	var _tex_cache: Dictionary = {}
+
+	var on_selection_changed: Callable = Callable()
+	var on_status_message: Callable = Callable()
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		clip_contents = false
+
+	func _get_dims() -> Vector3i:
+		if bp_ref != null and bp_ref.has_method("get_grid_dimensions"):
+			return bp_ref.get_grid_dimensions()
+		return Vector3i(5, 6, 2)
+
+	func _get_cell_px() -> float:
+		var dims: Vector3i = _get_dims()
+		var avail_w: float = maxf(size.x - float(dims.z) * DEPTH_OFFSET.x - 44.0, 160.0)
+		var avail_h: float = maxf(size.y - float(dims.z) * absf(DEPTH_OFFSET.y) - 56.0, 160.0)
+		return clampf(minf(avail_w / float(dims.x), avail_h / float(dims.y)), 28.0, 48.0)
+
+	func _get_crate_origin() -> Vector2:
+		var dims: Vector3i = _get_dims()
+		var cpx: float = _get_cell_px()
+		var total_w: float = float(dims.x) * cpx + float(dims.z) * DEPTH_OFFSET.x
+		var total_h: float = float(dims.y) * cpx + float(dims.z) * absf(DEPTH_OFFSET.y)
+		var ox: float = (size.x - total_w) * 0.5
+		var oy: float = (size.y - total_h) * 0.5 + float(dims.z) * absf(DEPTH_OFFSET.y) + 8.0
+		return Vector2(ox, oy)
+
+	func project_3d(x: float, y: float, z: float) -> Vector2:
+		var cpx: float = _get_cell_px()
+		return _get_crate_origin() + Vector2(x * cpx, y * cpx) + z * DEPTH_OFFSET
+
+	func sync_visual_positions() -> void:
+		if bp_ref == null:
+			return
+		var valid_uids: Dictionary = {}
+		for it in bp_ref.items:
+			var uid: int = int(it.get("uid", -1))
+			valid_uids[uid] = true
+			if not visual_y_map.has(uid):
+				var p: Vector3i = it.get("pos", Vector3i.ZERO)
+				visual_y_map[uid] = float(p.y)
+		for k in visual_y_map.keys():
+			if not valid_uids.has(k):
+				visual_y_map.erase(k)
+		queue_redraw()
+
+	## Triggers smooth gravity bounce Tweens (EASE_IN + TRANS_BOUNCE) for items that dropped.
+	func animate_gravity_drops(moved_items: Dictionary) -> void:
+		if bp_ref == null:
+			return
+		for uid_key in moved_items.keys():
+			var uid: int = int(uid_key)
+			var info: Dictionary = moved_items[uid_key]
+			var from_y: float = float(info.get("from_y", 0))
+			var to_y: float = float(info.get("to_y", 0))
+			if is_equal_approx(from_y, to_y):
+				visual_y_map[uid] = to_y
+				continue
+
+			if _active_tweens.has(uid) and is_instance_valid(_active_tweens[uid]):
+				(_active_tweens[uid] as Tween).kill()
+
+			visual_y_map[uid] = from_y
+			var drop_dist: float = absf(to_y - from_y)
+			var dur: float = clampf(0.26 + drop_dist * 0.055, 0.26, 0.55)
+			var tw := create_tween()
+			tw.tween_method(func(val: float):
+				visual_y_map[uid] = val
+				queue_redraw()
+			, from_y, to_y, dur).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_BOUNCE)
+			_active_tweens[uid] = tw
+		queue_redraw()
+
+	func set_active_z(z_val: int) -> void:
+		var dims: Vector3i = _get_dims()
+		active_z_slice = clampi(z_val, 0, dims.z - 1)
+		queue_redraw()
+
+	func rotate_dragged_xy() -> void:
+		if dragging_uid == -1:
+			return
+		drag_size = Vector3i(drag_size.y, drag_size.x, drag_size.z)
+		if bp_ref != null and bp_ref.has_method("play_sfx"):
+			bp_ref.play_sfx("laser_clean")
+		if on_status_message.is_valid():
+			on_status_message.call("Rotated 90° (X↔Y): %dx%dx%d" % [drag_size.x, drag_size.y, drag_size.z])
+		queue_redraw()
+
+	func flip_dragged_xz() -> void:
+		if dragging_uid == -1:
+			return
+		drag_size = Vector3i(drag_size.z, drag_size.y, drag_size.x)
+		if bp_ref != null and bp_ref.has_method("play_sfx"):
+			bp_ref.play_sfx("laser_clean")
+		if on_status_message.is_valid():
+			on_status_message.call("Flipped Thickness (X↔Z): %dx%dx%d" % [drag_size.x, drag_size.y, drag_size.z])
+		queue_redraw()
+
+	func cancel_drag() -> void:
+		if dragging_uid == -1:
+			return
+		var uid: int = dragging_uid
+		dragging_uid = -1
+		drag_has_moved = false
+		if bp_ref != null:
+			var idx: int = bp_ref.get_item_index_by_uid(uid)
+			if idx != -1:
+				bp_ref.items[idx]["pos"] = drag_orig_pos
+				bp_ref.items[idx]["size"] = drag_orig_size
+				visual_y_map[uid] = float(drag_orig_pos.y)
+			bp_ref._rebuild_grid_3d()
+		queue_redraw()
+
+	func _get_hover_grid_pos(mouse_local: Vector2, item_size: Vector3i) -> Vector3i:
+		var dims: Vector3i = _get_dims()
+		var cpx: float = _get_cell_px()
+		var origin: Vector2 = _get_crate_origin() + float(active_z_slice) * DEPTH_OFFSET
+		var rel: Vector2 = mouse_local - origin
+		var gx: int = int(floor((rel.x - (float(item_size.x) * cpx * 0.5)) / cpx + 0.5))
+		var gy: int = int(floor((rel.y - (float(item_size.y) * cpx * 0.5)) / cpx + 0.5))
+		gx = clampi(gx, 0, maxi(dims.x - item_size.x, 0))
+		gy = clampi(gy, 0, maxi(dims.y - item_size.y, 0))
+		var gz: int = clampi(active_z_slice, 0, maxi(dims.z - item_size.z, 0))
+		return Vector3i(gx, gy, gz)
+
+	func _pick_item_at_mouse(mouse_local: Vector2) -> int:
+		if bp_ref == null:
+			return -1
+		var cpx: float = _get_cell_px()
+		var sorted: Array = _get_sorted_items()
+		# Check front-to-back (reverse of draw order), skipping items faded in front of active_z_slice
+		for i in range(sorted.size() - 1, -1, -1):
+			var it: Dictionary = sorted[i]
+			var uid: int = int(it.get("uid", -1))
+			if uid == dragging_uid:
+				continue
+			var p: Vector3i = it.get("pos", Vector3i.ZERO)
+			var s: Vector3i = it.get("size", Vector3i.ONE)
+			# Items strictly in front of active_z_slice are faded to 20% and click-through!
+			if p.z < active_z_slice:
+				continue
+			var vy: float = float(visual_y_map.get(uid, float(p.y)))
+			var tl: Vector2 = project_3d(float(p.x), vy, float(p.z))
+			var front_rect := Rect2(tl, Vector2(float(s.x) * cpx, float(s.y) * cpx))
+			if front_rect.has_point(mouse_local):
+				return uid
+		return -1
+
+	func _gui_input(event: InputEvent) -> void:
+		if bp_ref == null:
+			return
+
+		if event is InputEventMouseMotion:
+			drag_mouse_pos = event.position
+			if dragging_uid != -1:
+				if event.position.distance_to(drag_start_mouse) > 6.0:
+					drag_has_moved = true
+				queue_redraw()
+			else:
+				var hit_uid: int = _pick_item_at_mouse(event.position)
+				if hit_uid != hovered_uid:
+					hovered_uid = hit_uid
+					if on_selection_changed.is_valid():
+						on_selection_changed.call(hovered_uid if hovered_uid != -1 else selected_uid)
+					queue_redraw()
+
+		elif event is InputEventMouseButton:
+			drag_mouse_pos = event.position
+			if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+				if dragging_uid != -1:
+					cancel_drag()
+					if on_status_message.is_valid():
+						on_status_message.call("Placement cancelled.")
+					accept_event()
+				return
+
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					if dragging_uid != -1:
+						# Click-to-place release
+						_attempt_drop_dragged(event.position)
+						accept_event()
+					else:
+						var hit_uid: int = _pick_item_at_mouse(event.position)
+						if hit_uid != -1:
+							var it: Dictionary = bp_ref.get_item_by_uid(hit_uid)
+							if not it.is_empty():
+								dragging_uid = hit_uid
+								selected_uid = hit_uid
+								drag_orig_pos = it.get("pos", Vector3i.ZERO)
+								drag_orig_size = it.get("size", Vector3i.ONE)
+								drag_size = drag_orig_size
+								drag_start_mouse = event.position
+								drag_has_moved = false
+								if on_selection_changed.is_valid():
+									on_selection_changed.call(selected_uid)
+								if on_status_message.is_valid():
+									on_status_message.call("Dragging! [R] Rotate X↔Y  |  [F] Flip X↔Z  |  [Q/E] Depth Layer")
+								queue_redraw()
+								accept_event()
+				else:
+					# Mouse button released: if user dragged, drop immediately
+					if dragging_uid != -1 and drag_has_moved:
+						_attempt_drop_dragged(event.position)
+						accept_event()
+
+	func _attempt_drop_dragged(mouse_local: Vector2) -> void:
+		if dragging_uid == -1 or bp_ref == null:
+			return
+		var uid: int = dragging_uid
+		var target_pos: Vector3i = _get_hover_grid_pos(mouse_local, drag_size)
+
+		bp_ref._rebuild_grid_3d(uid)
+		var can_fit: bool = bp_ref.can_place_in_grid(target_pos, drag_size, uid)
+		if can_fit:
+			# Snap visual start Y to release height so bounce tween falls from release slot!
+			visual_y_map[uid] = float(target_pos.y)
+			dragging_uid = -1
+			drag_has_moved = false
+			var moved: Dictionary = bp_ref.place_item_at(uid, target_pos, drag_size)
+			if not moved.has(uid):
+				var final_it: Dictionary = bp_ref.get_item_by_uid(uid)
+				var fy: int = (final_it.get("pos", target_pos) as Vector3i).y
+				moved[uid] = {"from_y": target_pos.y, "to_y": fy}
+			animate_gravity_drops(moved)
+			if bp_ref.has_method("play_sfx"):
+				bp_ref.play_sfx("pickup")
+			if on_status_message.is_valid():
+				on_status_message.call("Settled into 3D crate under gravity!")
+		else:
+			if bp_ref.has_method("play_sfx"):
+				bp_ref.play_sfx("hit")
+			cancel_drag()
+			if on_status_message.is_valid():
+				on_status_message.call("Slot blocked! Try [R]/[F] to rotate or [Q]/[E] to change Z layer.")
+		queue_redraw()
+
+	func _get_sorted_items() -> Array:
+		if bp_ref == null:
+			return []
+		var arr: Array = bp_ref.items.duplicate()
+		arr.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+			var pa: Vector3i = a.get("pos", Vector3i.ZERO)
+			var pb: Vector3i = b.get("pos", Vector3i.ZERO)
+			if pa.z != pb.z:
+				return pa.z > pb.z # Deeper Z drawn first
+			if pa.y != pb.y:
+				return pa.y > pb.y # Lower items drawn first, stacked items on top
+			return pa.x < pb.x # Left items drawn first
+		)
+		return arr
+
+	func _get_item_texture(item: Dictionary) -> Texture2D:
+		var path: String = str(item.get("sprite_path", item.get("icon_path", "")))
+		if path.is_empty():
+			return null
+		if _tex_cache.has(path):
+			return _tex_cache[path]
+		if ResourceLoader.exists(path):
+			var t := load(path) as Texture2D
+			_tex_cache[path] = t
+			return t
+		_tex_cache[path] = null
+		return null
+
+	func _draw() -> void:
+		if bp_ref == null:
+			return
+
+		var dims: Vector3i = _get_dims()
+		var cpx: float = _get_cell_px()
+		var font: Font = ThemeDB.fallback_font
+
+		# 1. Back Wall (z = dims.z)
+		var b_tl: Vector2 = project_3d(0.0, 0.0, float(dims.z))
+		var b_tr: Vector2 = project_3d(float(dims.x), 0.0, float(dims.z))
+		var b_br: Vector2 = project_3d(float(dims.x), float(dims.y), float(dims.z))
+		var b_bl: Vector2 = project_3d(0.0, float(dims.y), float(dims.z))
+		draw_polygon(PackedVector2Array([b_tl, b_tr, b_br, b_bl]), PackedColorArray([Color(0.03, 0.08, 0.14, 0.92)]))
+
+		# Floor (y = dims.y)
+		var f_bl: Vector2 = project_3d(0.0, float(dims.y), 0.0)
+		var f_br: Vector2 = project_3d(float(dims.x), float(dims.y), 0.0)
+		draw_polygon(PackedVector2Array([f_bl, f_br, b_br, b_bl]), PackedColorArray([Color(0.06, 0.14, 0.22, 0.95)]))
+
+		# Left Interior Wall (x = 0)
+		var f_tl: Vector2 = project_3d(0.0, 0.0, 0.0)
+		draw_polygon(PackedVector2Array([f_tl, b_tl, b_bl, f_bl]), PackedColorArray([Color(0.04, 0.11, 0.18, 0.85)]))
+
+		# Top Opening Entry Lip Highlight (y = 0)
+		var f_tr: Vector2 = project_3d(float(dims.x), 0.0, 0.0)
+		draw_polygon(PackedVector2Array([f_tl, f_tr, b_tr, b_tl]), PackedColorArray([Color(0.1, 0.45, 0.65, 0.18)]))
+		draw_string(font, b_tl + Vector2(6.0, -6.0), "▼ TOP CARGO HATCH (DROP ENTRY) — %dx%dx%d VOLUME" % [dims.x, dims.y, dims.z], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.4, 0.9, 1.0, 0.9))
+
+		# Back wall grid lines
+		var back_grid_col := Color(0.18, 0.35, 0.5, 0.25)
+		for gx in range(dims.x + 1):
+			draw_line(project_3d(float(gx), 0.0, float(dims.z)), project_3d(float(gx), float(dims.y), float(dims.z)), back_grid_col, 1.0)
+		for gy in range(dims.y + 1):
+			draw_line(project_3d(0.0, float(gy), float(dims.z)), project_3d(float(dims.x), float(gy), float(dims.z)), back_grid_col, 1.0)
+
+		# Floor depth slice lines
+		for gz in range(dims.z + 1):
+			var slice_col := Color(0.25, 0.85, 1.0, 0.65) if gz == active_z_slice else Color(0.2, 0.4, 0.55, 0.3)
+			draw_line(project_3d(0.0, float(dims.y), float(gz)), project_3d(float(dims.x), float(dims.y), float(gz)), slice_col, 1.5 if gz == active_z_slice else 1.0)
+			draw_line(project_3d(0.0, 0.0, float(gz)), project_3d(0.0, float(dims.y), float(gz)), slice_col, 1.0)
+
+		# Active Z Slice highlighted grid plane (behind items on this layer)
+		var slice_z: float = float(active_z_slice)
+		var active_grid_col := Color(0.2, 0.9, 1.0, 0.38)
+		for gx in range(dims.x + 1):
+			draw_line(project_3d(float(gx), 0.0, slice_z), project_3d(float(gx), float(dims.y), slice_z), active_grid_col, 1.0)
+		for gy in range(dims.y + 1):
+			draw_line(project_3d(0.0, float(gy), slice_z), project_3d(float(dims.x), float(gy), slice_z), active_grid_col, 1.0)
+
+		# 2. Packed 3D Extruded Relic Blocks (Sorted Back-to-Front)
+		var sorted: Array = _get_sorted_items()
+		for it in sorted:
+			var uid: int = int(it.get("uid", -1))
+			if uid == dragging_uid:
+				continue
+			var p: Vector3i = it.get("pos", Vector3i.ZERO)
+			var s: Vector3i = it.get("size", Vector3i.ONE)
+			var vy: float = float(visual_y_map.get(uid, float(p.y)))
+
+			# Depth Layer Slicer: items in front of active Z slice fade to 20% opacity
+			var alpha: float = 1.0
+			if p.z < active_z_slice:
+				alpha = 0.20
+			elif p.z > active_z_slice:
+				alpha = 0.72
+
+			var is_sel: bool = (uid == selected_uid or uid == hovered_uid) and alpha > 0.5
+			_draw_extruded_item(it, Vector3(float(p.x), vy, float(p.z)), s, alpha, is_sel, Color.WHITE)
+
+		# 3. Translucent Front Crate Wireframe (z = 0)
+		var wire_col := Color(0.35, 0.78, 0.95, 0.55)
+		draw_polyline(PackedVector2Array([f_tl, f_tr, f_br, f_bl, f_tl]), wire_col, 2.0, true)
+		draw_line(f_tl, b_tl, wire_col, 1.5)
+		draw_line(f_tr, b_tr, wire_col, 1.5)
+		draw_line(f_br, b_br, wire_col, 1.5)
+		draw_line(f_bl, b_bl, wire_col, 1.5)
+		draw_polyline(PackedVector2Array([b_tl, b_tr, b_br, b_bl, b_tl]), Color(0.25, 0.55, 0.75, 0.4), 1.5, true)
+
+		# Active Z Slice indicator tag
+		var z_tag_pos: Vector2 = project_3d(float(dims.x), float(dims.y), slice_z) + Vector2(8.0, -4.0)
+		draw_string(font, z_tag_pos, "◀ Z=%d" % active_z_slice, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.25, 1.0, 0.95))
+
+		# 4. Dragged Item & Gravity Landing Preview
+		if dragging_uid != -1:
+			var drag_item: Dictionary = bp_ref.get_item_by_uid(dragging_uid)
+			if not drag_item.is_empty():
+				var hover_pos: Vector3i = _get_hover_grid_pos(drag_mouse_pos, drag_size)
+				bp_ref._rebuild_grid_3d(dragging_uid)
+				var is_valid: bool = bp_ref.can_place_in_grid(hover_pos, drag_size, dragging_uid)
+
+				if is_valid:
+					var land_y: int = bp_ref.predict_drop_y(hover_pos, drag_size, dragging_uid)
+					if land_y > hover_pos.y:
+						# Draw vertical cyan gravity drop guide & landing shadow box
+						var drop_from: Vector2 = project_3d(float(hover_pos.x) + float(drag_size.x) * 0.5, float(hover_pos.y + drag_size.y), float(hover_pos.z))
+						var drop_to: Vector2 = project_3d(float(hover_pos.x) + float(drag_size.x) * 0.5, float(land_y + drag_size.y), float(hover_pos.z))
+						draw_dashed_line(drop_from, drop_to, Color(0.2, 1.0, 0.95, 0.75), 2.0, 5.0)
+						var land_tl: Vector2 = project_3d(float(hover_pos.x), float(land_y), float(hover_pos.z))
+						var land_rect := Rect2(land_tl, Vector2(float(drag_size.x) * cpx, float(drag_size.y) * cpx))
+						draw_rect(land_rect, Color(0.2, 1.0, 0.75, 0.16), true)
+						draw_rect(land_rect, Color(0.2, 1.0, 0.75, 0.7), false, 1.5)
+
+				var tint := Color(0.35, 1.0, 0.55, 0.92) if is_valid else Color(1.0, 0.3, 0.3, 0.92)
+				_draw_extruded_item(drag_item, Vector3(float(hover_pos.x), float(hover_pos.y), float(hover_pos.z)), drag_size, 0.92, true, tint)
+
+	func _draw_extruded_item(it: Dictionary, p: Vector3, s: Vector3i, alpha: float, is_highlighted: bool, override_tint: Color) -> void:
+		var cpx: float = _get_cell_px()
+		var font: Font = ThemeDB.fallback_font
+		var is_clean: bool = bool(it.get("cleaned", it.get("identified", false)))
+
+		var base_col: Color = Color("#5A4A3C") # Rocky brown when encrusted
+		if is_clean:
+			base_col = Color.from_string(str(it.get("color_hex", "#00ffff")), Color.CYAN)
+			if it.has("color") and it["color"] is Color:
+				base_col = it["color"]
+
+		if override_tint != Color.WHITE:
+			base_col = override_tint
+
+		var fx: float = p.x
+		var fy: float = p.y
+		var fz: float = p.z
+		var sx: float = float(s.x)
+		var sy: float = float(s.y)
+		var sz: float = float(s.z)
+
+		# 8 projected vertices of the 3D volume block
+		var f_tl: Vector2 = project_3d(fx, fy, fz)
+		var f_tr: Vector2 = project_3d(fx + sx, fy, fz)
+		var f_br: Vector2 = project_3d(fx + sx, fy + sy, fz)
+		var f_bl: Vector2 = project_3d(fx, fy + sy, fz)
+
+		var b_tl: Vector2 = project_3d(fx, fy, fz + sz)
+		var b_tr: Vector2 = project_3d(fx + sx, fy, fz + sz)
+		var b_br: Vector2 = project_3d(fx + sx, fy + sy, fz + sz)
+
+		# 1. Top Thickness Face (lighter shade)
+		var top_col: Color = base_col.lightened(0.22)
+		top_col.a = 0.78 * alpha
+		draw_polygon(PackedVector2Array([f_tl, f_tr, b_tr, b_tl]), PackedColorArray([top_col]))
+
+		# 2. Right Side Thickness Face (darker shade)
+		var side_col: Color = base_col.darkened(0.32)
+		side_col.a = 0.85 * alpha
+		draw_polygon(PackedVector2Array([f_tr, b_tr, b_br, f_br]), PackedColorArray([side_col]))
+
+		# 3. Front Face Body
+		var front_bg: Color = base_col.darkened(0.55)
+		front_bg.a = 0.90 * alpha
+		var front_rect := Rect2(f_tl, Vector2(sx * cpx, sy * cpx))
+		draw_rect(front_rect, front_bg, true)
+
+		# 4. Relic Sprite Texture (or Encrusted Silhouette) inside Front Face
+		var pad: float = 4.0
+		var inner_w: float = maxf(front_rect.size.x - pad * 2.0, 8.0)
+		var inner_h: float = maxf(front_rect.size.y - pad * 2.0, 8.0)
+		var tex: Texture2D = _get_item_texture(it) if is_clean else null
+		if tex != null and tex.get_width() > 0 and tex.get_height() > 0:
+			var sc: float = minf(inner_w / float(tex.get_width()), inner_h / float(tex.get_height()))
+			var dw: float = float(tex.get_width()) * sc
+			var dh: float = float(tex.get_height()) * sc
+			var dst := Rect2(front_rect.position + (front_rect.size - Vector2(dw, dh)) * 0.5, Vector2(dw, dh))
+			draw_texture_rect(tex, dst, false, Color(1.0, 1.0, 1.0, alpha))
+		else:
+			# Encrusted rock lump emblem when uncleaned
+			var cx: Vector2 = front_rect.get_center()
+			var r_rad: float = minf(inner_w, inner_h) * 0.32
+			draw_circle(cx, r_rad, Color(0.36, 0.29, 0.23, alpha))
+			draw_string(font, cx + Vector2(-4.0, 5.0), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.85, 0.4, alpha))
+
+		# 5. Crisp Extruded Outlines
+		var edge_col: Color = Color(1.0, 1.0, 1.0, alpha) if is_highlighted else Color(base_col.r, base_col.g, base_col.b, 0.95 * alpha)
+		var edge_w: float = 2.4 if is_highlighted else 1.5
+		draw_polyline(PackedVector2Array([f_tl, f_tr, f_br, f_bl, f_tl]), edge_col, edge_w, true)
+		draw_polyline(PackedVector2Array([f_tl, b_tl, b_tr, f_tr]), Color(edge_col.r, edge_col.g, edge_col.b, 0.75 * alpha), 1.2, true)
+		draw_polyline(PackedVector2Array([f_tr, b_tr, b_br, f_br]), Color(edge_col.r, edge_col.g, edge_col.b, 0.75 * alpha), 1.2, true)
+
+		# 6. Corner Dimension & Weight Tags
+		if alpha >= 0.45:
+			var dim_txt: String = "%dx%dx%d" % [s.x, s.y, s.z]
+			draw_string(font, f_tl + Vector2(3.0, 11.0), dim_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.95, 0.98, 1.0, alpha))
+			var wt_txt: String = "%dkg" % int(it.get("weight", 1))
+			if bool(it.get("fragile", false)):
+				wt_txt += " ⚠"
+			draw_string(font, f_bl + Vector2(3.0, -3.0), wt_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(1.0, 0.88, 0.45, alpha))
+
+
+## Returns true if the global 3D Volumetric Crate Inspector UI is currently open.
+func is_backpack_ui_open() -> bool:
+	return _crate_modal != null and _crate_modal.visible
+
+
+## Toggles the universal 3D Volumetric Gravity Crate Inspector ([I] / [Tab]).
+func toggle_backpack_ui() -> void:
+	if _crate_layer == null:
+		_create_crate_ui()
+	if _crate_modal == null:
+		return
+
+	_crate_modal.visible = not _crate_modal.visible
+	if _crate_modal.visible:
+		_refresh_crate_ui()
+	elif _crate_viewport != null and _crate_viewport.has_method("cancel_drag"):
+		_crate_viewport.cancel_drag()
+
+
+func close_backpack_ui() -> void:
+	if _crate_modal != null and _crate_modal.visible:
+		if _crate_viewport != null and _crate_viewport.has_method("cancel_drag"):
+			_crate_viewport.cancel_drag()
+		_crate_modal.visible = false
+
+
+func _create_crate_ui() -> void:
+	_crate_layer = CanvasLayer.new()
+	_crate_layer.name = "VolumetricCrateCanvasLayer"
+	_crate_layer.layer = 16
+	add_child(_crate_layer)
+
+	_crate_modal = Control.new()
+	_crate_modal.name = "VolumetricCrateModal"
+	_crate_modal.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crate_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	_crate_modal.visible = false
+	_crate_layer.add_child(_crate_modal)
+
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.01, 0.03, 0.07, 0.84)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	_crate_modal.add_child(backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_crate_modal.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(920.0, 560.0)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.08, 0.14, 0.97)
+	style.border_color = Color(0.22, 0.72, 0.95, 0.9)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(10)
+	style.content_margin_left = 20.0
+	style.content_margin_right = 20.0
+	style.content_margin_top = 16.0
+	style.content_margin_bottom = 16.0
+	panel.add_theme_stylebox_override("panel", style)
+	center.add_child(panel)
+
+	var main_vbox := VBoxContainer.new()
+	main_vbox.add_theme_constant_override("separation", 10)
+	panel.add_child(main_vbox)
+
+	# Header Row
+	var header := HBoxContainer.new()
+	var title := Label.new()
+	title.text = "📦 3D VOLUMETRIC GRAVITY CARGO CRATE"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_color_override("font_color", Color(0.35, 0.95, 1.0))
+	header.add_child(title)
+
+	var close_btn := Button.new()
+	close_btn.text = " ✕ Close [ESC / I / TAB] "
+	close_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	close_btn.pressed.connect(close_backpack_ui)
+	header.add_child(close_btn)
+	main_vbox.add_child(header)
+
+	# Depth Layer Slicer Toolbar
+	var slicer_row := HBoxContainer.new()
+	slicer_row.add_theme_constant_override("separation", 8)
+	var slice_lbl := Label.new()
+	slice_lbl.text = "Depth Layer Slicer ([Q] / [E]):"
+	slice_lbl.add_theme_font_size_override("font_size", 13)
+	slice_lbl.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
+	slicer_row.add_child(slice_lbl)
+
+	_crate_layer_bar = HBoxContainer.new()
+	_crate_layer_bar.add_theme_constant_override("separation", 6)
+	slicer_row.add_child(_crate_layer_bar)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slicer_row.add_child(spacer)
+
+	_crate_stats_label = Label.new()
+	_crate_stats_label.add_theme_font_size_override("font_size", 13)
+	_crate_stats_label.add_theme_color_override("font_color", Color(1.0, 0.88, 0.4))
+	slicer_row.add_child(_crate_stats_label)
+	main_vbox.add_child(slicer_row)
+
+	main_vbox.add_child(HSeparator.new())
+
+	# Body HBox: Left = 2.5D Isometric Crate Viewport, Right = Inspector & Actions
+	var body_hbox := HBoxContainer.new()
+	body_hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_hbox.add_theme_constant_override("separation", 16)
+	main_vbox.add_child(body_hbox)
+
+	var vp_frame := PanelContainer.new()
+	vp_frame.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vp_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var vp_style := StyleBoxFlat.new()
+	vp_style.bg_color = Color(0.02, 0.05, 0.09, 0.96)
+	vp_style.border_color = Color(0.15, 0.35, 0.5, 0.75)
+	vp_style.set_border_width_all(1)
+	vp_style.set_corner_radius_all(6)
+	vp_frame.add_theme_stylebox_override("panel", vp_style)
+	body_hbox.add_child(vp_frame)
+
+	var vp := CrateViewport3D.new()
+	vp.name = "CrateViewport3D"
+	vp.bp_ref = self
+	vp.custom_minimum_size = Vector2(540.0, 410.0)
+	vp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vp.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vp.on_selection_changed = _on_crate_selection_changed
+	vp.on_status_message = func(msg: String):
+		if _crate_status_label != null:
+			_crate_status_label.text = msg
+	vp_frame.add_child(vp)
+	_crate_viewport = vp
+
+	# Right Inspector Sidebar
+	var side_panel := PanelContainer.new()
+	side_panel.custom_minimum_size = Vector2(300.0, 0.0)
+	var side_style := StyleBoxFlat.new()
+	side_style.bg_color = Color(0.05, 0.1, 0.17, 0.92)
+	side_style.border_color = Color(0.2, 0.45, 0.65, 0.65)
+	side_style.set_border_width_all(1)
+	side_style.set_corner_radius_all(6)
+	side_style.content_margin_left = 14.0
+	side_style.content_margin_right = 14.0
+	side_style.content_margin_top = 12.0
+	side_style.content_margin_bottom = 12.0
+	side_panel.add_theme_stylebox_override("panel", side_style)
+	body_hbox.add_child(side_panel)
+
+	var side_vbox := VBoxContainer.new()
+	side_vbox.add_theme_constant_override("separation", 8)
+	side_panel.add_child(side_vbox)
+
+	var insp_head := Label.new()
+	insp_head.text = "RELIC INSPECTOR"
+	insp_head.add_theme_font_size_override("font_size", 14)
+	insp_head.add_theme_color_override("font_color", Color(0.45, 0.9, 1.0))
+	side_vbox.add_child(insp_head)
+
+	_crate_inspector_title = Label.new()
+	_crate_inspector_title.text = "Hover or click a 3D block"
+	_crate_inspector_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_crate_inspector_title.add_theme_font_size_override("font_size", 14)
+	_crate_inspector_title.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
+	side_vbox.add_child(_crate_inspector_title)
+
+	_crate_inspector_meta = Label.new()
+	_crate_inspector_meta.text = "Click an item to pick up, rotate in 3D, and drop under gravity."
+	_crate_inspector_meta.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_crate_inspector_meta.add_theme_font_size_override("font_size", 12)
+	_crate_inspector_meta.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	side_vbox.add_child(_crate_inspector_meta)
+
+	_crate_inspector_lore = Label.new()
+	_crate_inspector_lore.text = ""
+	_crate_inspector_lore.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_crate_inspector_lore.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_crate_inspector_lore.add_theme_font_size_override("font_size", 11)
+	_crate_inspector_lore.add_theme_color_override("font_color", Color(0.75, 0.86, 0.95))
+	side_vbox.add_child(_crate_inspector_lore)
+
+	side_vbox.add_child(HSeparator.new())
+
+	# Controls Legend
+	var controls_lbl := Label.new()
+	controls_lbl.text = "CONTROLS:\n• [Click / Drag] Grab & Drop Item\n• [R] Rotate 90° (X ↔ Y)\n• [F] Flip Thickness (X ↔ Z)\n• [Q / E] Slice Depth Layer (Z)\n• [Right-Click] Cancel Drag"
+	controls_lbl.add_theme_font_size_override("font_size", 11)
+	controls_lbl.add_theme_color_override("font_color", Color(0.65, 0.8, 0.9))
+	side_vbox.add_child(controls_lbl)
+
+	# 3D Rotate & Action Buttons
+	var rot_row := HBoxContainer.new()
+	rot_row.add_theme_constant_override("separation", 6)
+	var rot_xy_btn := Button.new()
+	rot_xy_btn.text = "↻ Rotate [R]"
+	rot_xy_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rot_xy_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	rot_xy_btn.pressed.connect(func():
+		if _crate_viewport != null:
+			_crate_viewport.rotate_dragged_xy()
+	)
+	rot_row.add_child(rot_xy_btn)
+
+	var flip_xz_btn := Button.new()
+	flip_xz_btn.text = "⇄ Flip Z [F]"
+	flip_xz_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	flip_xz_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	flip_xz_btn.pressed.connect(func():
+		if _crate_viewport != null:
+			_crate_viewport.flip_dragged_xz()
+	)
+	rot_row.add_child(flip_xz_btn)
+	side_vbox.add_child(rot_row)
+
+	var autopack_btn := Button.new()
+	autopack_btn.text = "⚡ Auto-Pack & Settle Gravity"
+	autopack_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	autopack_btn.add_theme_color_override("font_color", Color(0.35, 1.0, 0.75))
+	autopack_btn.pressed.connect(func():
+		var moved: Dictionary = auto_pack_all()
+		if _crate_viewport != null:
+			_crate_viewport.animate_gravity_drops(moved)
+		play_sfx("pickup")
+		if _crate_status_label != null:
+			_crate_status_label.text = "Auto-packed all relics under 3D gravity!"
+	)
+	side_vbox.add_child(autopack_btn)
+
+	_crate_drop_btn = Button.new()
+	_crate_drop_btn.text = "🗑 Drop Selected Relic"
+	_crate_drop_btn.disabled = true
+	_crate_drop_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_crate_drop_btn.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+	_crate_drop_btn.pressed.connect(func():
+		if _crate_viewport == null:
+			return
+		var uid_to_drop: int = _crate_viewport.selected_uid
+		if uid_to_drop == -1:
+			return
+		_crate_viewport.cancel_drag()
+		remove_item_by_uid(uid_to_drop, true)
+		_crate_viewport.selected_uid = -1
+		_crate_viewport.hovered_uid = -1
+		_refresh_crate_ui()
+		if _crate_status_label != null:
+			_crate_status_label.text = "Relic dropped! Stacked items settled under gravity."
+	)
+	side_vbox.add_child(_crate_drop_btn)
+
+	# Bottom Status Line
+	_crate_status_label = Label.new()
+	_crate_status_label.text = "Ready — Items in front of the active Z layer fade to 20% so you can reach deeper layers."
+	_crate_status_label.add_theme_font_size_override("font_size", 11)
+	_crate_status_label.add_theme_color_override("font_color", Color(0.55, 0.85, 0.95))
+	main_vbox.add_child(_crate_status_label)
+
+	# Connect live inventory & gravity signals
+	inventory_changed.connect(_on_crate_inventory_changed)
+	gravity_settled.connect(_on_crate_gravity_settled)
+
+
+func _on_crate_inventory_changed() -> void:
+	if is_backpack_ui_open():
+		_refresh_crate_ui()
+
+
+func _on_crate_gravity_settled(moved_items: Dictionary) -> void:
+	if is_backpack_ui_open() and _crate_viewport != null:
+		_crate_viewport.animate_gravity_drops(moved_items)
+
+
+func _on_crate_selection_changed(uid: int) -> void:
+	if _crate_inspector_title == null:
+		return
+	var it: Dictionary = get_item_by_uid(uid)
+	if it.is_empty():
+		_crate_inspector_title.text = "Hover or click a 3D block"
+		_crate_inspector_meta.text = "Items physically settle under gravity."
+		_crate_inspector_lore.text = ""
+		if _crate_drop_btn != null:
+			_crate_drop_btn.disabled = true
+		return
+
+	var is_clean: bool = bool(it.get("cleaned", it.get("identified", false)))
+	var s: Vector3i = it.get("size", Vector3i.ONE)
+	var p: Vector3i = it.get("pos", Vector3i.ZERO)
+	var wt: int = int(it.get("weight", 1))
+	var frag_str: String = "  •  ⚠ FRAGILE" if bool(it.get("fragile", false)) else ""
+
+	if is_clean:
+		_crate_inspector_title.text = str(it.get("name", "Human Relic"))
+		_crate_inspector_meta.text = "Volume: %dx%dx%d  |  Layer Z=%d  |  %d kg%s\nValue: $%d  •  [%s]" % [
+			s.x, s.y, s.z, p.z, wt, frag_str, int(it.get("value", 0)), str(it.get("rarity", "Common"))
+		]
+		_crate_inspector_lore.text = "\"%s\"" % str(it.get("lore", it.get("alien_desc", "")))
+	else:
+		_crate_inspector_title.text = "Encrusted Relic Lump (%d kg)" % wt
+		_crate_inspector_meta.text = "Volume: %dx%dx%d  |  Layer Z=%d  |  %d kg\nValue: ??? (Clean at Home Lab)" % [
+			s.x, s.y, s.z, p.z, wt
+		]
+		_crate_inspector_lore.text = "Covered in deep-sea barnacles. Bring to your Home Cleaning Lab to reveal its identity."
+
+	if _crate_drop_btn != null:
+		_crate_drop_btn.disabled = false
+
+
+func _refresh_crate_ui() -> void:
+	if _crate_viewport == null:
+		return
+	var dims: Vector3i = get_grid_dimensions()
+	_crate_viewport.set_active_z(clampi(_crate_viewport.active_z_slice, 0, dims.z - 1))
+	_crate_viewport.sync_visual_positions()
+
+	if _crate_stats_label != null:
+		_crate_stats_label.text = "Exo Lv.%d (%dx%dx%d)  |  Vol: %d/%d  |  Wt: %.1f/%.1f kg  |  Val: $%d" % [
+			exo_level, dims.x, dims.y, dims.z, get_occupied_cells(), get_total_cells(), current_weight, max_weight, get_total_value()
+		]
+
+	if _crate_layer_bar != null:
+		for c in _crate_layer_bar.get_children():
+			c.queue_free()
+		for z in range(dims.z):
+			var btn := Button.new()
+			var label_suffix: String = " (Front)" if z == 0 else (" (Back)" if z == dims.z - 1 else "")
+			btn.text = " Z=%d%s " % [z, label_suffix]
+			btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+			if z == _crate_viewport.active_z_slice:
+				btn.add_theme_color_override("font_color", Color(0.25, 1.0, 0.9))
+			else:
+				btn.add_theme_color_override("font_color", Color(0.7, 0.78, 0.88))
+			btn.pressed.connect(func():
+				_crate_viewport.set_active_z(z)
+				_refresh_crate_ui()
+			)
+			_crate_layer_bar.add_child(btn)
+
+	_on_crate_selection_changed(_crate_viewport.selected_uid)
+
+
+func _input(event: InputEvent) -> void:
+	# Intercept keys & mouse while 3D Volumetric Crate Inspector is open so underlying scenes stay paused
+	if is_backpack_ui_open():
+		if event is InputEventKey and event.pressed and not event.echo:
+			var kc: int = event.physical_keycode if event.physical_keycode != 0 else event.keycode
+			if kc == KEY_ESCAPE or kc == KEY_I or kc == KEY_TAB:
+				close_backpack_ui()
+				if get_viewport() != null:
+					get_viewport().set_input_as_handled()
+				return
+			elif kc == KEY_Q:
+				if _crate_viewport != null:
+					_crate_viewport.set_active_z(_crate_viewport.active_z_slice - 1)
+					_refresh_crate_ui()
+				if get_viewport() != null:
+					get_viewport().set_input_as_handled()
+				return
+			elif kc == KEY_E:
+				if _crate_viewport != null:
+					_crate_viewport.set_active_z(_crate_viewport.active_z_slice + 1)
+					_refresh_crate_ui()
+				if get_viewport() != null:
+					get_viewport().set_input_as_handled()
+				return
+			elif kc == KEY_R:
+				if _crate_viewport != null:
+					_crate_viewport.rotate_dragged_xy()
+				if get_viewport() != null:
+					get_viewport().set_input_as_handled()
+				return
+			elif kc == KEY_F:
+				if _crate_viewport != null:
+					_crate_viewport.flip_dragged_xz()
+				if get_viewport() != null:
+					get_viewport().set_input_as_handled()
+				return
 
 
 # ==============================================================================
@@ -2386,6 +3858,8 @@ func toggle_codex_ui() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if is_backpack_ui_open():
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_C or event.keycode == KEY_C:
 			if get_viewport() != null:
@@ -2663,24 +4137,75 @@ func _populate_codex_ui() -> void:
 func _serialize_items() -> Array:
 	var serialized: Array = []
 	for it in items:
+		var p: Vector3i = it.get("pos", Vector3i.ZERO)
+		var s: Vector3i = it.get("size", Vector3i.ONE)
+		var is_clean: bool = bool(it.get("cleaned", it.get("identified", false)))
 		serialized.append({
+			"uid": int(it.get("uid", -1)),
 			"id": str(it.get("id", "")),
-			"identified": bool(it.get("identified", false))
+			"cleaned": is_clean,
+			"identified": is_clean,
+			"pos": [p.x, p.y, p.z],
+			"size": [s.x, s.y, s.z]
 		})
 	return serialized
 
 
 func _deserialize_items(loaded_list: Array) -> void:
 	items.clear()
+	_rebuild_grid_3d()
+	var max_uid: int = 0
+	var unplaced_legacy: Array[Dictionary] = []
+
 	for entry in loaded_list:
-		if entry is Dictionary:
-			var rid: String = str(entry.get("id", ""))
-			var is_id: bool = bool(entry.get("identified", false))
-			if RELIC_DB.has(rid):
-				var inst: Dictionary = RELIC_DB[rid].duplicate(true)
-				inst["identified"] = is_id
+		if not (entry is Dictionary):
+			continue
+		var rid: String = str(entry.get("id", ""))
+		if not RELIC_DB.has(rid):
+			continue
+		var is_clean: bool = bool(entry.get("cleaned", entry.get("identified", false)))
+		var inst: Dictionary = RELIC_DB[rid].duplicate(true)
+		inst["identified"] = is_clean
+		inst["cleaned"] = is_clean
+
+		var uid: int = int(entry.get("uid", -1))
+		if uid <= 0:
+			_next_item_uid += 1
+			uid = _next_item_uid
+		max_uid = maxi(max_uid, uid)
+		inst["uid"] = uid
+
+		var pos_arr = entry.get("pos", [])
+		var size_arr = entry.get("size", [])
+		if pos_arr is Array and pos_arr.size() >= 3 and size_arr is Array and size_arr.size() >= 3:
+			var p := Vector3i(int(pos_arr[0]), int(pos_arr[1]), int(pos_arr[2]))
+			var s := Vector3i(maxi(int(size_arr[0]), 1), maxi(int(size_arr[1]), 1), maxi(int(size_arr[2]), 1))
+			if can_place_in_grid(p, s):
+				inst["pos"] = p
+				inst["size"] = s
 				items.append(inst)
+				_stamp_item_in_grid(p, s, uid)
+				continue
+
+		unplaced_legacy.append(inst)
+
+	# Auto-place any legacy save items without 3D coordinates via top-entry + gravity
+	for inst in unplaced_legacy:
+		var base_sz: Vector3i = get_relic_size_3d(str(inst.get("id", "")))
+		var slot: Dictionary = find_top_entry_slot(base_sz)
+		if bool(slot.get("found", false)):
+			var p: Vector3i = slot["pos"]
+			var s: Vector3i = slot["size"]
+			inst["pos"] = p
+			inst["size"] = s
+			items.append(inst)
+			_stamp_item_in_grid(p, s, int(inst["uid"]))
+			apply_backpack_gravity(false)
+
+	_next_item_uid = maxi(_next_item_uid, max_uid + 1)
 	_recalculate_weight()
+	_rebuild_grid_3d()
+	apply_backpack_gravity(false)
 
 
 func save_game() -> void:
@@ -2793,7 +4318,9 @@ func reset_save_data() -> void:
 	blueprints = 1
 	cleaned_crust_units = 0
 	items.clear()
+	_next_item_uid = 1
 	current_weight = 0.0
+	_rebuild_grid_3d()
 	exhibited_relics.clear()
 	discovered_relics.clear()
 	active_vip_quest.clear()

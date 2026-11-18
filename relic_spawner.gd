@@ -340,9 +340,16 @@ class RelicItem extends Area2D:
 			tween.tween_property(self, "modulate:a", 0.0, 0.25)
 			tween.chain().tween_callback(queue_free)
 		else:
-			# Overweight feedback
+			# 3D Volume Blocked or Overweight feedback
 			warning_timer = 1.8
-			prompt_label.text = "[!] Backpack Too Heavy! (Max %.1f kg)" % float(backpack.max_weight)
+			var err_msg: String = "Backpack Too Heavy! (Max %.1f kg)" % float(backpack.max_weight)
+			if backpack.has_method("get_add_item_error"):
+				var specific_err: String = backpack.get_add_item_error(relic_id)
+				if not specific_err.is_empty():
+					err_msg = specific_err
+			if backpack.has_method("play_sfx"):
+				backpack.play_sfx("hit")
+			prompt_label.text = "[!] %s" % err_msg
 			prompt_label.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
 
 			# Shake animation on the label

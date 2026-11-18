@@ -475,11 +475,10 @@ func _create_museum_building() -> void:
 	sign_label.add_theme_constant_override("outline_size", 2)
 	museum.add_child(sign_label)
 
-	# Smart Sprite Auto-Loader (Direction 4)
-	if Engine.has_singleton("Backpack"):
-		Engine.get_singleton("Backpack").load_smart_sprite(museum, "res://assets/buildings/museum.png", Vector2(300.0, 150.0))
-	elif get_node_or_null("/root/Backpack") != null:
-		get_node("/root/Backpack").load_smart_sprite(museum, "res://assets/buildings/museum.png", Vector2(300.0, 150.0))
+	# Smart Sprite Auto-Loader (Master Asset Registry: museum -> [256, 256])
+	var bp_m = _get_backpack()
+	if bp_m != null and bp_m.has_method("load_smart_sprite"):
+		bp_m.load_smart_sprite(museum, "museum")
 
 	world_25d.add_child(museum)
 
@@ -713,11 +712,10 @@ func _create_gear_workshop() -> void:
 	sign_lbl.add_theme_constant_override("outline_size", 2)
 	shop.add_child(sign_lbl)
 
-	# Smart Sprite Auto-Loader (Direction 4)
-	if Engine.has_singleton("Backpack"):
-		Engine.get_singleton("Backpack").load_smart_sprite(shop, "res://assets/buildings/workshop_o2.png", Vector2(180.0, 130.0))
-	elif get_node_or_null("/root/Backpack") != null:
-		get_node("/root/Backpack").load_smart_sprite(shop, "res://assets/buildings/workshop_o2.png", Vector2(180.0, 130.0))
+	# Smart Sprite Auto-Loader (Master Asset Registry: workshop_o2 -> [192, 192])
+	var bp_o2 = _get_backpack()
+	if bp_o2 != null and bp_o2.has_method("load_smart_sprite"):
+		bp_o2.load_smart_sprite(shop, "workshop_o2")
 
 	world_25d.add_child(shop)
 
@@ -842,11 +840,10 @@ func _create_exo_cargo_building() -> void:
 	sign_lbl.add_theme_constant_override("outline_size", 2)
 	shop.add_child(sign_lbl)
 
-	# Smart Sprite Auto-Loader (Direction 4)
-	if Engine.has_singleton("Backpack"):
-		Engine.get_singleton("Backpack").load_smart_sprite(shop, "res://assets/buildings/workshop_exo.png", Vector2(180.0, 130.0))
-	elif get_node_or_null("/root/Backpack") != null:
-		get_node("/root/Backpack").load_smart_sprite(shop, "res://assets/buildings/workshop_exo.png", Vector2(180.0, 130.0))
+	# Smart Sprite Auto-Loader (Master Asset Registry: workshop_exo -> [192, 192])
+	var bp_exo = _get_backpack()
+	if bp_exo != null and bp_exo.has_method("load_smart_sprite"):
+		bp_exo.load_smart_sprite(shop, "workshop_exo")
 
 	world_25d.add_child(shop)
 
@@ -1016,11 +1013,10 @@ func _create_homestead_building() -> void:
 	sign_lbl.add_theme_constant_override("outline_size", 2)
 	home.add_child(sign_lbl)
 
-	# Smart Sprite Auto-Loader (Direction 4)
-	if Engine.has_singleton("Backpack"):
-		Engine.get_singleton("Backpack").load_smart_sprite(home, "res://assets/buildings/home.png", Vector2(220.0, 140.0))
-	elif get_node_or_null("/root/Backpack") != null:
-		get_node("/root/Backpack").load_smart_sprite(home, "res://assets/buildings/home.png", Vector2(220.0, 140.0))
+	# Smart Sprite Auto-Loader (Master Asset Registry: home -> [256, 256])
+	var bp_h = _get_backpack()
+	if bp_h != null and bp_h.has_method("load_smart_sprite"):
+		bp_h.load_smart_sprite(home, "home")
 
 	world_25d.add_child(home)
 
@@ -1073,8 +1069,10 @@ func _handle_player_movement(_delta: float) -> void:
 	if player == null:
 		return
 
-	# Freeze player movement while shop modal, inventory, vip quest, or reset confirmation is open
-	if current_open_shop != "" or (inventory_modal != null and inventory_modal.visible) or (reset_modal != null and reset_modal.visible) or (vip_quest_modal != null and vip_quest_modal.visible):
+	# Freeze player movement while shop modal, 3D crate, inventory, vip quest, or reset confirmation is open
+	var bp_ui = _get_backpack()
+	var crate_open: bool = bp_ui != null and bp_ui.has_method("is_backpack_ui_open") and bp_ui.is_backpack_ui_open()
+	if crate_open or current_open_shop != "" or (inventory_modal != null and inventory_modal.visible) or (reset_modal != null and reset_modal.visible) or (vip_quest_modal != null and vip_quest_modal.visible):
 		player.velocity = Vector2.ZERO
 		return
 
@@ -1269,6 +1267,10 @@ func _setup_inventory_ui() -> void:
 
 
 func _toggle_inventory() -> void:
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("toggle_backpack_ui"):
+		bp.toggle_backpack_ui()
+		return
 	if inventory_modal == null:
 		return
 	inventory_modal.visible = not inventory_modal.visible

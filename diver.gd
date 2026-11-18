@@ -139,7 +139,8 @@ func _physics_process(delta: float) -> void:
 	if _emp_cooldown > 0.0:
 		_emp_cooldown = maxf(_emp_cooldown - delta, 0.0)
 
-	if _is_rescuing:
+	var bp = _get_backpack()
+	if _is_rescuing or (bp != null and bp.has_method("is_backpack_ui_open") and bp.is_backpack_ui_open()):
 		velocity = Vector2.ZERO
 		return
 
@@ -154,6 +155,10 @@ func _physics_process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	var bp_ui = _get_backpack()
+	if bp_ui != null and bp_ui.has_method("is_backpack_ui_open") and bp_ui.is_backpack_ui_open():
+		return
+
 	if _is_rescuing:
 		if event is InputEventKey and event.pressed and not event.echo:
 			if event.physical_keycode == KEY_SPACE or event.keycode == KEY_SPACE or event.physical_keycode == KEY_ENTER or event.keycode == KEY_ENTER or event.physical_keycode == KEY_ESCAPE or event.keycode == KEY_ESCAPE:
@@ -1206,8 +1211,12 @@ func _setup_inventory_modal() -> void:
 	add_child(inv_layer)
 
 
-## Toggles visibility of the Backpack Inventory Panel.
+## Toggles visibility of the universal 3D Volumetric Gravity Crate Inspector.
 func _toggle_inventory_panel() -> void:
+	var bp = _get_backpack()
+	if bp != null and bp.has_method("toggle_backpack_ui"):
+		bp.toggle_backpack_ui()
+		return
 	if _inventory_modal == null:
 		return
 	_inventory_modal.visible = not _inventory_modal.visible
@@ -1598,8 +1607,11 @@ func _update_ui() -> void:
 	var cur_day: int = int(backpack.current_day) if backpack != null else 1
 
 	var emp_status: String = "[SPACE/LMB] EMP (6 O2)" if _emp_cooldown <= 0.0 else "[EMP Rchg %.1fs]" % _emp_cooldown
-	_hud_label.text = "Day: %d  |  Oxygen: %3.0f / %3.0f%s%s\nDepth:  %5.1f m  (%s)\nGold:   $%d  |  Blueprints: %d\nCargo:  %4.1f / %4.1f kg%s\nTools:  [Q/RMB] Sonar (4 O2)  |  %s  |  [TAB] Manifest" % [
-		cur_day, oxygen, cur_max_o2, status_text, pressure_note, depth, zone_str, player_gold, bp_count, cur_w, max_w, cargo_status, emp_status
+	var vol_str: String = ""
+	if backpack != null and backpack.has_method("get_occupied_cells"):
+		vol_str = "  |  3D Vol: %d/%d" % [backpack.get_occupied_cells(), backpack.get_total_cells()]
+	_hud_label.text = "Day: %d  |  Oxygen: %3.0f / %3.0f%s%s\nDepth:  %5.1f m  (%s)\nGold:   $%d  |  Blueprints: %d\nCargo:  %4.1f / %4.1f kg%s%s\nTools:  [Q/RMB] Sonar (4 O2)  |  %s  |  [I/TAB] 3D Crate" % [
+		cur_day, oxygen, cur_max_o2, status_text, pressure_note, depth, zone_str, player_gold, bp_count, cur_w, max_w, vol_str, cargo_status, emp_status
 	]
 
 	if oxygen <= 25.0 and not _is_surfaced:
